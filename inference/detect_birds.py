@@ -19,7 +19,7 @@ import json
 import tempfile
 import shutil
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Union
 import numpy as np
 import soundfile as sf
 import matplotlib
@@ -29,6 +29,7 @@ import librosa
 import librosa.display
 from ultralytics import YOLO
 from tqdm import tqdm
+import glob
 
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -422,14 +423,60 @@ class BirdCallDetector:
         
         return merged_songs
     
-    def detect(self, audio_path: str, output_path: str = None, output_format: str = 'json') -> List[Dict]:
+    def detect_multiple_files(self, audio_paths: List[str], output_path: str = None, output_format: str = 'json') -> List[Dict]:
         """
-        Detect bird calls in an audio file.
+        Detect bird calls in multiple audio files.
+        
+        Args:
+            audio_paths: List of paths to WAV files
+            output_path: Optional base path to save results (without extension)
+            output_format: Output format - 'json', 'csv', 'txt', or 'all'
+            
+        Returns:
+            List of all detections from all files with timing and species information
+        """
+        all_detections = []
+        
+        print(f"\nProcessing {len(audio_paths)} audio files...")
+        
+        for i, audio_path in enumerate(audio_paths, 1):
+            print(f"\n{'='*60}")
+            print(f"Processing file {i}/{len(audio_paths)}: {Path(audio_path).name}")
+            print(f"{'='*60}")
+            
+            try:
+                # Detect in this file
+                file_detections = self.detect_single_file(audio_path)
+                
+                # Add filename to each detection
+                filename = Path(audio_path).name
+                for detection in file_detections:
+                    detection['filename'] = filename
+                    detection['file_path'] = str(audio_path)
+                
+                all_detections.extend(file_detections)
+                print(f"Found {len(file_detections)} detections in this file")
+                
+            except Exception as e:
+                print(f"Error processing {audio_path}: {e}")
+                continue
+        
+        print(f"\n{'='*60}")
+        print(f"TOTAL DETECTIONS ACROSS ALL FILES: {len(all_detections)}")
+        print(f"{'='*60}")
+        
+        # Save results if output path is specified
+        if output_path and all_detections:
+            self.save_results(all_detections, output_path, audio_paths[0] if audio_paths else None, output_format)
+        
+        return all_detections
+
+    def detect_single_file(self, audio_path: str) -> List[Dict]:
+        """
+        Detect bird calls in a single audio file (renamed from detect method).
         
         Args:
             audio_path: Path to the WAV file
-            output_path: Optional base path to save results (without extension)
-            output_format: Output format - 'json', 'csv', 'txt', or 'all'
             
         Returns:
             List of detections with timing and species information
@@ -460,15 +507,40 @@ class BirdCallDetector:
             
             print(f"Final count: {len(final_detections)} song segments")
             
-            # Save results if output path is specified
-            if output_path:
-                self.save_results(final_detections, output_path, audio_path, output_format)
-            
             return final_detections
             
         finally:
             # Clean up temporary directory
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def detect(self, audio_path: str, output_path: str = None, output_format: str = 'json') -> List[Dict]:
+        """
+        Detect bird calls in an audio file or directory.
+        
+        Args:
+            audio_path: Path to the WAV file or directory containing WAV files
+            output_path: Optional base path to save results (without extension)
+            output_format: Output format - 'json', 'csv', 'txt', or 'all'
+            
+        Returns:
+            List of detections with timing and species information
+        """
+        # Find all .wav files
+        wav_files = find_wav_files(audio_path)
+        
+        if not wav_files:
+            print("No .wav files found to process")
+            return []
+        
+        if len(wav_files) == 1:
+            # Single file - use original logic
+            detections = self.detect_single_file(wav_files[0])
+            if output_path:
+                self.save_results(detections, output_path, wav_files[0], output_format)
+            return detections
+        else:
+            # Multiple files - use new batch processing
+            return self.detect_multiple_files(wav_files, output_path, output_format)
     
     def _convert_to_json_serializable(self, obj):
         """
@@ -487,25 +559,44 @@ class BirdCallDetector:
         else:
             return obj
 
-    def save_detections(self, detections: List[Dict], output_path: str, audio_path: str):
+    def save_detections(self, detections: List[Dict], output_path: str, audio_path: str = None):
         """
         Save detections to JSON file.
         
         Args:
             detections: List of detections
             output_path: Path to save JSON file
-            audio_path: Original audio file path (for metadata)
+            audio_path: Original audio file path (for metadata, optional for multi-file)
         """
-        output = {
-            'audio_file': str(audio_path),
-            'model_config': {
-                'confidence_threshold': self.conf_threshold,
-                'iou_threshold': self.iou_threshold,
-                'dataset': config.DATASET_NAME,
-            },
-            'detection_count': len(detections),
-            'detections': detections
-        }
+        # Determine if this is multi-file output
+        is_multi_file = any('filename' in det for det in detections)
+        
+        if is_multi_file:
+            # Multi-file output
+            unique_files = list(set(det.get('file_path', 'unknown') for det in detections))
+            output = {
+                'audio_files': unique_files,
+                'file_count': len(unique_files),
+                'model_config': {
+                    'confidence_threshold': self.conf_threshold,
+                    'iou_threshold': self.iou_threshold,
+                    'dataset': config.DATASET_NAME,
+                },
+                'detection_count': len(detections),
+                'detections': detections
+            }
+        else:
+            # Single file output
+            output = {
+                'audio_file': str(audio_path) if audio_path else 'unknown',
+                'model_config': {
+                    'confidence_threshold': self.conf_threshold,
+                    'iou_threshold': self.iou_threshold,
+                    'dataset': config.DATASET_NAME,
+                },
+                'detection_count': len(detections),
+                'detections': detections
+            }
         
         # Convert all numpy types to JSON-serializable types
         output = self._convert_to_json_serializable(output)
@@ -515,19 +606,16 @@ class BirdCallDetector:
         
         print(f"\nSaved detections to: {output_path}")
     
-    def save_detections_csv(self, detections: List[Dict], output_path: str, audio_path: str):
+    def save_detections_csv(self, detections: List[Dict], output_path: str, audio_path: str = None):
         """
         Save detections to CSV file in the same format as annotations.csv.
         
         Args:
             detections: List of detections
             output_path: Path to save CSV file
-            audio_path: Original audio file path (for metadata)
+            audio_path: Original audio file path (for metadata, optional for multi-file)
         """
         import csv
-        
-        # Get just the filename without path for the CSV
-        audio_filename = Path(audio_path).name
         
         with open(output_path, 'w', newline='') as f:
             writer = csv.writer(f)
@@ -537,8 +625,16 @@ class BirdCallDetector:
             
             # Write detection data
             for det in detections:
+                # Use filename from detection if available (for multi-file), otherwise use audio_path
+                if 'filename' in det:
+                    filename = det['filename']
+                elif audio_path:
+                    filename = Path(audio_path).name
+                else:
+                    filename = 'unknown'
+                
                 writer.writerow([
-                    audio_filename,
+                    filename,
                     f"{det['time_start']:.1f}",
                     f"{det['time_end']:.1f}",
                     det['freq_low_hz'],
@@ -548,34 +644,42 @@ class BirdCallDetector:
         
         print(f"\nSaved detections to CSV: {output_path}")
     
-    def save_detections_raven(self, detections: List[Dict], output_path: str, audio_path: str):
+    def save_detections_raven(self, detections: List[Dict], output_path: str, audio_path: str = None):
         """
         Save detections to Raven .txt format for visualization.
         
         Args:
             detections: List of detections
             output_path: Path to save Raven .txt file
-            audio_path: Original audio file path (for metadata)
+            audio_path: Original audio file path (for metadata, optional for multi-file)
         """
         with open(output_path, 'w') as f:
             # Write header (matching example.txt format)
-            f.write("Selection\tView\tChannel\tBegin Time (S)\tEnd Time (S)\tLow Freq (Hz)\tHigh Freq (Hz)\tAnnotation\n")
+            f.write("Selection\tView\tChannel\tBegin Time (S)\tEnd Time (S)\tLow Freq (Hz)\tHigh Freq (Hz)\tAnnotation\tFilename\n")
             
             # Write detection data
             for i, det in enumerate(detections, 1):
+                # Use filename from detection if available (for multi-file), otherwise use audio_path
+                if 'filename' in det:
+                    filename = det['filename']
+                elif audio_path:
+                    filename = Path(audio_path).name
+                else:
+                    filename = 'unknown'
+                
                 f.write(f"{i}\tSpectrogram 1\t1\t{det['time_start']:.1f}\t{det['time_end']:.1f}\t"
-                       f"{det['freq_low_hz']}\t{det['freq_high_hz']}\t{det['species']}\n")
+                       f"{det['freq_low_hz']}\t{det['freq_high_hz']}\t{det['species']}\t{filename}\n")
         
         print(f"\nSaved detections to Raven format: {output_path}")
     
-    def save_results(self, detections: List[Dict], output_path: str, audio_path: str, output_format: str):
+    def save_results(self, detections: List[Dict], output_path: str, audio_path: str = None, output_format: str = 'json'):
         """
         Save detections in the specified format(s).
         
         Args:
             detections: List of detections
             output_path: Base path for output files (without extension)
-            audio_path: Original audio file path (for metadata)
+            audio_path: Original audio file path (for metadata, optional for multi-file)
             output_format: Output format - 'json', 'csv', 'txt', or 'all'
         """
         output_path_obj = Path(output_path)
@@ -647,6 +751,45 @@ class BirdCallDetector:
             print()
 
 
+def find_wav_files(audio_path: str) -> List[str]:
+    """
+    Find all .wav files in the given path (file or directory).
+    
+    Args:
+        audio_path: Path to a single .wav file or directory containing .wav files
+        
+    Returns:
+        List of paths to .wav files
+    """
+    audio_path_obj = Path(audio_path)
+    
+    if audio_path_obj.is_file():
+        # Single file
+        if audio_path_obj.suffix.lower() == '.wav':
+            return [str(audio_path_obj)]
+        else:
+            print(f"Warning: {audio_path} is not a .wav file, skipping")
+            return []
+    
+    elif audio_path_obj.is_dir():
+        # Directory - find all .wav files recursively
+        wav_files = []
+        for wav_file in audio_path_obj.rglob('*.wav'):
+            wav_files.append(str(wav_file))
+        
+        # Also check for .WAV (uppercase)
+        for wav_file in audio_path_obj.rglob('*.WAV'):
+            wav_files.append(str(wav_file))
+        
+        wav_files.sort()  # Sort for consistent ordering
+        print(f"Found {len(wav_files)} .wav files in directory: {audio_path}")
+        return wav_files
+    
+    else:
+        print(f"Error: {audio_path} is neither a file nor a directory")
+        return []
+
+
 def ensure_output_directory(output_path: str) -> bool:
     """
     Ensure the output directory exists, asking user for permission to create if needed.
@@ -689,8 +832,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic detection
+  # Basic detection (single file)
   python inference/detect_birds.py --audio recording.wav --model final_models/best.pt
+  
+  # Process entire folder of WAV files
+  python inference/detect_birds.py --audio /path/to/audio/folder --model best.pt --output-path results --output-format all
   
   # Save results to JSON (new format)
   python inference/detect_birds.py --audio recording.wav --model best.pt --output-path results --output-format json
@@ -713,7 +859,7 @@ Examples:
         '--audio',
         type=str,
         required=True,
-        help='Path to the audio file (WAV format)'
+        help='Path to the audio file (WAV format) or directory containing WAV files'
     )
     
     parser.add_argument(
@@ -763,7 +909,7 @@ Examples:
     
     # Validate inputs
     if not Path(args.audio).exists():
-        print(f"Error: Audio file not found: {args.audio}", file=sys.stderr)
+        print(f"Error: Audio file or directory not found: {args.audio}", file=sys.stderr)
         sys.exit(1)
     
     if not Path(args.model).exists():
