@@ -158,16 +158,6 @@ class DetectionEvaluator:
         output_dir = output_path_obj.parent / f"{output_path_obj.stem}"
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Save confusion matrix
-        confusion_matrix_path = str(output_dir / "confusion_matrix.npy")
-        np.save(confusion_matrix_path, metrics['confusion_matrix'])
-        print(f"\nSaved confusion matrix to: {confusion_matrix_path}")
-        
-        # Save normalized confusion matrix
-        normalized_matrix_path = str(output_dir / "normalized_confusion_matrix.npy")
-        np.save(normalized_matrix_path, metrics['normalized_confusion_matrix'])
-        print(f"Saved normalized confusion matrix to: {normalized_matrix_path}")
-        
         # Save class labels
         class_labels_path = str(output_dir / "class_labels.json")
         with open(class_labels_path, 'w') as f:
