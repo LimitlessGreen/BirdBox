@@ -19,7 +19,7 @@ import json
 import tempfile
 import shutil
 from pathlib import Path
-from typing import List, Dict, Tuple, Union
+from typing import List, Dict, Tuple
 import numpy as np
 import soundfile as sf
 import matplotlib
@@ -29,7 +29,6 @@ import librosa
 import librosa.display
 from ultralytics import YOLO
 from tqdm import tqdm
-import glob
 
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -57,7 +56,7 @@ class BirdCallDetector:
     MAX_FREQ = 15000  # Hz
     MIN_FREQ = 50     # Hz
     
-    def __init__(self, model_path: str, conf_threshold: float = 0.25, iou_threshold: float = 0.5, song_gap_threshold: float = 2.0):
+    def __init__(self, model_path: str, conf_threshold: float = 0.25, iou_threshold: float = 0.5, song_gap_threshold: float = 0.5):
         """
         Initialize the bird call detector.
         
@@ -644,34 +643,6 @@ class BirdCallDetector:
         
         print(f"\nSaved detections to CSV: {output_path}")
     
-    def save_detections_raven(self, detections: List[Dict], output_path: str, audio_path: str = None):
-        """
-        Save detections to Raven .txt format for visualization.
-        
-        Args:
-            detections: List of detections
-            output_path: Path to save Raven .txt file
-            audio_path: Original audio file path (for metadata, optional for multi-file)
-        """
-        with open(output_path, 'w') as f:
-            # Write header (matching example.txt format)
-            f.write("Selection\tView\tChannel\tBegin Time (S)\tEnd Time (S)\tLow Freq (Hz)\tHigh Freq (Hz)\tAnnotation\tFilename\n")
-            
-            # Write detection data
-            for i, det in enumerate(detections, 1):
-                # Use filename from detection if available (for multi-file), otherwise use audio_path
-                if 'filename' in det:
-                    filename = det['filename']
-                elif audio_path:
-                    filename = Path(audio_path).name
-                else:
-                    filename = 'unknown'
-                
-                f.write(f"{i}\tSpectrogram 1\t1\t{det['time_start']:.1f}\t{det['time_end']:.1f}\t"
-                       f"{det['freq_low_hz']}\t{det['freq_high_hz']}\t{det['species']}\t{filename}\n")
-        
-        print(f"\nSaved detections to Raven format: {output_path}")
-    
     def save_results(self, detections: List[Dict], output_path: str, audio_path: str = None, output_format: str = 'json'):
         """
         Save detections in the specified format(s).
@@ -680,7 +651,7 @@ class BirdCallDetector:
             detections: List of detections
             output_path: Base path for output files (without extension)
             audio_path: Original audio file path (for metadata, optional for multi-file)
-            output_format: Output format - 'json', 'csv', 'txt', or 'all'
+            output_format: Output format - 'json', 'csv', or 'all'
         """
         output_path_obj = Path(output_path)
         
@@ -691,10 +662,6 @@ class BirdCallDetector:
         if output_format == 'csv' or output_format == 'all':
             csv_path = str(output_path_obj.with_suffix('.csv'))
             self.save_detections_csv(detections, csv_path, audio_path)
-        
-        if output_format == 'txt' or output_format == 'all':
-            txt_path = str(output_path_obj.with_suffix('.txt'))
-            self.save_detections_raven(detections, txt_path, audio_path)
     
     def print_summary(self, detections: List[Dict]):
         """Print a summary of detections."""
@@ -792,13 +759,13 @@ def find_wav_files(audio_path: str) -> List[str]:
 
 def ensure_output_directory(output_path: str) -> bool:
     """
-    Ensure the output directory exists, asking user for permission to create if needed.
+    Ensure the output directory exists, creating it automatically if needed.
     
     Args:
         output_path: The output path (may be a file path)
         
     Returns:
-        True if directory exists or was created successfully, False if user declined
+        True if directory exists or was created successfully, False if creation failed
     """
     if not output_path:
         return True  # No output path specified, nothing to check
@@ -809,20 +776,13 @@ def ensure_output_directory(output_path: str) -> bool:
     if output_dir.exists():
         return True
     
-    # Directory doesn't exist, ask user for permission
-    print(f"\nOutput directory does not exist: {output_dir}")
-    response = input("Would you like to create this directory? (y/n): ").strip().lower()
-    
-    if response in ['y', 'yes']:
-        try:
-            output_dir.mkdir(parents=True, exist_ok=True)
-            print(f"✓ Created directory: {output_dir}")
-            return True
-        except Exception as e:
-            print(f"✗ Error creating directory: {e}")
-            return False
-    else:
-        print("✗ Directory creation declined. Exiting.")
+    # Directory doesn't exist, create it automatically
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"✓ Created output directory: {output_dir}")
+        return True
+    except Exception as e:
+        print(f"✗ Error creating directory: {e}")
         return False
 
 
@@ -843,9 +803,6 @@ Examples:
   
   # Save results to CSV
   python inference/detect_birds.py --audio recording.wav --model best.pt --output-path results --output-format csv
-  
-  # Save results to Raven .txt format
-  python inference/detect_birds.py --audio recording.wav --model best.pt --output-path results --output-format txt
   
   # Save all formats
   python inference/detect_birds.py --audio recording.wav --model best.pt --output-path results --output-format all
@@ -879,9 +836,9 @@ Examples:
     parser.add_argument(
         '--output-format',
         type=str,
-        choices=['json', 'csv', 'txt', 'all'],
+        choices=['json', 'csv', 'all'],
         default='json',
-        help='Output format: json (default), csv, txt, or all formats'
+        help='Output format: json (default), csv, or all formats'
     )
     
     parser.add_argument(
@@ -901,8 +858,8 @@ Examples:
     parser.add_argument(
         '--song-gap',
         type=float,
-        default=2.0,
-        help='Max gap (seconds) between detections to merge into same song (default: 2.0)'
+        default=0.5,
+        help='Max gap (seconds) between detections to merge into same song (default: 0.5)'
     )
     
     args = parser.parse_args()

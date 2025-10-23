@@ -57,7 +57,7 @@ def load_labels_csv(csv_path: str) -> pd.DataFrame:
 
 
 def compute_confusion_matrix(detections_df: pd.DataFrame, labels_df: pd.DataFrame, 
-                           iou_threshold: float = 0.5, time_tolerance: float = 0.5) -> Tuple[np.ndarray, List[str]]:
+                           iou_threshold: float = 0.5) -> Tuple[np.ndarray, List[str]]:
     """
     Compute confusion matrix for bird call detections.
     
@@ -65,7 +65,7 @@ def compute_confusion_matrix(detections_df: pd.DataFrame, labels_df: pd.DataFram
         detections_df: DataFrame with detection results
         labels_df: DataFrame with ground truth labels
         iou_threshold: IoU threshold for considering detections as matches (default: 0.5)
-        time_tolerance: Time tolerance in seconds for matching detections (default: 0.5)
+            A detection and label are considered a match if their 2D IoU (time-frequency) >= iou_threshold
         
     Returns:
         Tuple of (confusion_matrix, class_labels)
@@ -105,7 +105,7 @@ def compute_confusion_matrix(detections_df: pd.DataFrame, labels_df: pd.DataFram
             file_detections = detection_groups.get_group(filename_base)
             for _, detection in file_detections.iterrows():
                 pred_idx = species_to_idx[detection['Species eBird Code']]
-                confusion_matrix[background_idx, pred_idx] += 1  # [true=background, pred=species]
+                confusion_matrix[pred_idx, background_idx] += 1  # [pred=species, true=background]
             continue
         
         file_detections = detection_groups.get_group(filename_base)
@@ -131,31 +131,34 @@ def compute_confusion_matrix(detections_df: pd.DataFrame, labels_df: pd.DataFram
                 if detection['Species eBird Code'] != label['Species eBird Code']:
                     continue
                 
-                # Compute temporal IoU
-                iou = compute_temporal_iou(
+                # Compute 2D IoU (time-frequency)
+                iou = compute_2d_iou(
                     detection['Start Time (s)'], detection['End Time (s)'],
-                    label['Start Time (s)'], label['End Time (s)']
+                    detection['Low Freq (Hz)'], detection['High Freq (Hz)'],
+                    label['Start Time (s)'], label['End Time (s)'],
+                    label['Low Freq (Hz)'], label['High Freq (Hz)']
                 )
                 
-                if iou > best_iou and iou >= iou_threshold:
+                # Check if this is a valid match using IoU threshold
+                if iou >= iou_threshold and iou > best_iou:
                     best_iou = iou
                     best_match = label_idx
             
             if best_match is not None:
                 # True positive
                 pred_idx = species_to_idx[detection['Species eBird Code']]
-                confusion_matrix[pred_idx, pred_idx] += 1  # [true_idx, pred_idx]
+                confusion_matrix[pred_idx, pred_idx] += 1  # [pred_idx, true_idx]
                 matched_labels.add(best_match)
             else:
                 # False positive
                 pred_idx = species_to_idx[detection['Species eBird Code']]
-                confusion_matrix[background_idx, pred_idx] += 1  # [true=background, pred=species]
+                confusion_matrix[pred_idx, background_idx] += 1  # [pred=species, true=background]
         
         # Remaining unmatched labels are false negatives
         for label_idx, label in enumerate(labels):
             if label_idx not in matched_labels:
                 true_idx = species_to_idx[label['Species eBird Code']]
-                confusion_matrix[true_idx, background_idx] += 1  # [true=species, pred=background]
+                confusion_matrix[background_idx, true_idx] += 1  # [pred=background, true=species]
     
     # Add true negatives (correctly identified background)
     # This is computed as the total audio duration minus all detected and labeled regions
@@ -231,38 +234,60 @@ def add_true_negatives(confusion_matrix: np.ndarray, detections_df: pd.DataFrame
     return confusion_matrix
 
 
-def compute_temporal_iou(start1: float, end1: float, start2: float, end2: float) -> float:
+def compute_2d_iou(time1_start: float, time1_end: float, freq1_low: float, freq1_high: float,
+                   time2_start: float, time2_end: float, freq2_low: float, freq2_high: float) -> float:
     """
-    Compute temporal IoU between two time intervals.
+    Compute 2D IoU between two bounding boxes in time-frequency space.
+    
+    This is the proper IoU for bird call detection, considering both temporal and frequency dimensions,
+    similar to spatial IoU in object detection.
     
     Args:
-        start1, end1: Start and end times of first interval
-        start2, end2: Start and end times of second interval
+        time1_start, time1_end: Time bounds of first detection/label
+        freq1_low, freq1_high: Frequency bounds of first detection/label
+        time2_start, time2_end: Time bounds of second detection/label  
+        freq2_low, freq2_high: Frequency bounds of second detection/label
         
     Returns:
-        Temporal IoU value between 0 and 1
+        2D IoU value between 0 and 1
     """
-    # Compute intersection
-    intersection_start = max(start1, start2)
-    intersection_end = min(end1, end2)
+    # Compute temporal intersection
+    time_intersection_start = max(time1_start, time2_start)
+    time_intersection_end = min(time1_end, time2_end)
     
-    if intersection_start >= intersection_end:
+    if time_intersection_start >= time_intersection_end:
         return 0.0
     
-    intersection = intersection_end - intersection_start
+    time_intersection = time_intersection_end - time_intersection_start
     
-    # Compute union
-    union = (end1 - start1) + (end2 - start2) - intersection
+    # Compute frequency intersection
+    freq_intersection_low = max(freq1_low, freq2_low)
+    freq_intersection_high = min(freq1_high, freq2_high)
     
-    if union <= 0:
+    if freq_intersection_low >= freq_intersection_high:
         return 0.0
     
-    return intersection / union
+    freq_intersection = freq_intersection_high - freq_intersection_low
+    
+    # Compute intersection area
+    intersection_area = time_intersection * freq_intersection
+    
+    # Compute areas of both boxes
+    area1 = (time1_end - time1_start) * (freq1_high - freq1_low)
+    area2 = (time2_end - time2_start) * (freq2_high - freq2_low)
+    
+    # Compute union area
+    union_area = area1 + area2 - intersection_area
+    
+    if union_area <= 0:
+        return 0.0
+    
+    return intersection_area / union_area
 
 
 def normalize_confusion_matrix(confusion_matrix: np.ndarray) -> np.ndarray:
     """
-    Normalize confusion matrix by row (true labels).
+    Normalize confusion matrix by column (predicted labels).
     
     Args:
         confusion_matrix: Raw confusion matrix
@@ -271,10 +296,10 @@ def normalize_confusion_matrix(confusion_matrix: np.ndarray) -> np.ndarray:
         Normalized confusion matrix
     """
     # Avoid division by zero
-    row_sums = confusion_matrix.sum(axis=1)
-    row_sums[row_sums == 0] = 1  # Avoid division by zero
+    col_sums = confusion_matrix.sum(axis=0)
+    col_sums[col_sums == 0] = 1  # Avoid division by zero
     
-    return confusion_matrix.astype(float) / row_sums[:, np.newaxis]
+    return confusion_matrix.astype(float) / col_sums[np.newaxis, :]
 
 
 def plot_confusion_matrix(confusion_matrix: np.ndarray, class_labels: List[str], 
@@ -302,8 +327,8 @@ def plot_confusion_matrix(confusion_matrix: np.ndarray, class_labels: List[str],
                 cbar_kws={'label': 'Normalized Count'})
     
     plt.title(title)
-    plt.xlabel('Predicted Species')
-    plt.ylabel('True Species')
+    plt.xlabel('True Species')
+    plt.ylabel('Predicted Species')
     plt.xticks(rotation=45, ha='right')
     plt.yticks(rotation=0)
     plt.tight_layout()
@@ -334,15 +359,15 @@ def print_confusion_matrix_summary(confusion_matrix: np.ndarray, class_labels: L
     print("-" * 60)
     
     # Header
-    header = f"{'True\\Pred':<12}"
+    header = f"{'Pred\\True':<12}"
     for label in class_labels:
         header += f"{label:<8}"
     print(header)
     print("-" * 60)
     
     # Rows
-    for i, true_label in enumerate(class_labels):
-        row = f"{true_label:<12}"
+    for i, pred_label in enumerate(class_labels):
+        row = f"{pred_label:<12}"
         for j in range(n_classes):
             row += f"{confusion_matrix[i, j]:<8.3f}"
         print(row)
@@ -356,14 +381,14 @@ def print_confusion_matrix_summary(confusion_matrix: np.ndarray, class_labels: L
     for i, species in enumerate(class_labels):
         if species != 'background':  # Skip the background class
             # Precision = TP / (TP + FP)
-            # FP = all predictions of this species - TP
+            # FP = all predictions of this species - TP (row sum - TP)
             tp = confusion_matrix[i, i]
-            fp = confusion_matrix[:, i].sum() - tp
+            fp = confusion_matrix[i, :].sum() - tp
             precision = tp / (tp + fp) if (tp + fp) > 0 else 0
             
             # Recall = TP / (TP + FN)
-            # FN = all true instances of this species - TP
-            fn = confusion_matrix[i, :].sum() - tp
+            # FN = all true instances of this species - TP (column sum - TP)
+            fn = confusion_matrix[:, i].sum() - tp
             recall = tp / (tp + fn) if (tp + fn) > 0 else 0
             
             print(f"{species:<12}: Precision={precision:.3f}, Recall={recall:.3f}")
@@ -372,8 +397,8 @@ def print_confusion_matrix_summary(confusion_matrix: np.ndarray, class_labels: L
     if 'background' in class_labels:
         bg_idx = class_labels.index('background')
         bg_tp = confusion_matrix[bg_idx, bg_idx]
-        bg_fp = confusion_matrix[:, bg_idx].sum() - bg_tp  # All predictions as background - TP
-        bg_fn = confusion_matrix[bg_idx, :].sum() - bg_tp  # All true background - TP
+        bg_fp = confusion_matrix[bg_idx, :].sum() - bg_tp  # All predictions as background - TP (row)
+        bg_fn = confusion_matrix[:, bg_idx].sum() - bg_tp  # All true background - TP (column)
         
         bg_precision = bg_tp / (bg_tp + bg_fp) if (bg_tp + bg_fp) > 0 else 0
         bg_recall = bg_tp / (bg_tp + bg_fn) if (bg_tp + bg_fn) > 0 else 0

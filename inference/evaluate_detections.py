@@ -42,19 +42,17 @@ class DetectionEvaluator:
     to computing and saving evaluation metrics.
     """
     
-    def __init__(self, iou_threshold: float = 0.5, time_tolerance: float = 0.5):
+    def __init__(self, iou_threshold: float = 0.5):
         """
         Initialize the detection evaluator.
         
         Args:
             iou_threshold: IoU threshold for considering detections as matches
-            time_tolerance: Time tolerance in seconds for matching detections
         """
         self.iou_threshold = iou_threshold
-        self.time_tolerance = time_tolerance
         
         print(f"Initialized evaluator with IoU threshold: {iou_threshold}")
-        print(f"Time tolerance: {time_tolerance}s")
+        print("Using 2D IoU (time-frequency)")
     
     def load_data(self, labels_path: str, detections_path: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
@@ -98,8 +96,7 @@ class DetectionEvaluator:
         print(f"\nComputing confusion matrix...")
         confusion_matrix, class_labels = compute_confusion_matrix(
             detections_df, labels_df, 
-            iou_threshold=self.iou_threshold,
-            time_tolerance=self.time_tolerance
+            iou_threshold=self.iou_threshold
         )
         
         print(f"Computed confusion matrix: {confusion_matrix.shape}")
@@ -193,7 +190,6 @@ class DetectionEvaluator:
         summary = {
             'evaluation_parameters': {
                 'iou_threshold': self.iou_threshold,
-                'time_tolerance': self.time_tolerance,
                 'beta': f_beta_results['beta']
             },
             'data_summary': {
@@ -304,13 +300,13 @@ class DetectionEvaluator:
 
 def ensure_output_directory(output_path: str) -> bool:
     """
-    Ensure the output directory exists, asking user for permission to create if needed.
+    Ensure the output directory exists, creating it automatically if needed.
     
     Args:
         output_path: The output path (may be a file path)
         
     Returns:
-        True if directory exists or was created successfully, False if user declined
+        True if directory exists or was created successfully, False if creation failed
     """
     if not output_path:
         return True  # No output path specified, nothing to check
@@ -321,20 +317,13 @@ def ensure_output_directory(output_path: str) -> bool:
     if output_dir.exists():
         return True
     
-    # Directory doesn't exist, ask user for permission
-    print(f"\nOutput directory does not exist: {output_dir}")
-    response = input("Would you like to create this directory? (y/n): ").strip().lower()
-    
-    if response in ['y', 'yes']:
-        try:
-            output_dir.mkdir(parents=True, exist_ok=True)
-            print(f"✓ Created directory: {output_dir}")
-            return True
-        except Exception as e:
-            print(f"✗ Error creating directory: {e}")
-            return False
-    else:
-        print("✗ Directory creation declined. Exiting.")
+    # Directory doesn't exist, create it automatically
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"✓ Created output directory: {output_dir}")
+        return True
+    except Exception as e:
+        print(f"✗ Error creating directory: {e}")
         return False
 
 
@@ -350,11 +339,12 @@ Examples:
   # Evaluation with F2-score (emphasizes recall)
   python inference/evaluate_detections.py --labels labels.csv --detections detections.csv --output results --beta 2.0
   
-  # Evaluation with custom IoU threshold
+  # Evaluation with custom IoU threshold (more lenient)
   python inference/evaluate_detections.py --labels labels.csv --detections detections.csv --output results --iou-threshold 0.3
   
   # Evaluation without plots
   python inference/evaluate_detections.py --labels labels.csv --detections detections.csv --output results --no-plot
+  
         """
     )
     
@@ -393,18 +383,13 @@ Examples:
         help='IoU threshold for considering detections as matches (default: 0.5)'
     )
     
-    parser.add_argument(
-        '--time-tolerance',
-        type=float,
-        default=0.5,
-        help='Time tolerance in seconds for matching detections (default: 0.5)'
-    )
     
     parser.add_argument(
         '--no-plot',
         action='store_true',
         help='Skip generating confusion matrix plots'
     )
+    
     
     args = parser.parse_args()
     
@@ -423,8 +408,7 @@ Examples:
     
     # Create evaluator
     evaluator = DetectionEvaluator(
-        iou_threshold=args.iou_threshold,
-        time_tolerance=args.time_tolerance
+        iou_threshold=args.iou_threshold
     )
     
     # Run evaluation

@@ -33,13 +33,13 @@ def compute_f_beta_scores(confusion_matrix: np.ndarray, class_labels: List[str],
             continue
             
         # Extract TP, FP, FN from confusion matrix
-        # Matrix is [true_idx, pred_idx], so:
-        # TP = confusion_matrix[i, i] (true=species, pred=species)
-        # FP = sum of all predictions of this species - TP (predicted as species but not true species)
-        # FN = sum of all true instances of this species - TP (true species but not predicted as species)
+        # Matrix is [pred_idx, true_idx], so:
+        # TP = confusion_matrix[i, i] (pred=species, true=species)
+        # FP = sum of all predictions of this species - TP (row sum - TP)
+        # FN = sum of all true instances of this species - TP (column sum - TP)
         tp = confusion_matrix[i, i]
-        fp = confusion_matrix[:, i].sum() - tp  # All predictions of species i - TP
-        fn = confusion_matrix[i, :].sum() - tp  # All true instances of species i - TP
+        fp = confusion_matrix[i, :].sum() - tp  # All predictions of species i - TP (row)
+        fn = confusion_matrix[:, i].sum() - tp  # All true instances of species i - TP (column)
         
         # Compute precision, recall, and F-beta score
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
@@ -97,8 +97,8 @@ def compute_weighted_f_beta_score(confusion_matrix: np.ndarray, class_labels: Li
     """
     n_classes = len(class_labels)
     
-    # Get class frequencies (sum of each row)
-    class_frequencies = np.sum(confusion_matrix, axis=1)
+    # Get class frequencies (sum of each column = true class frequencies)
+    class_frequencies = np.sum(confusion_matrix, axis=0)
     total_samples = np.sum(class_frequencies)
     
     if total_samples == 0:
@@ -140,8 +140,8 @@ def compute_micro_f_beta_score(confusion_matrix: np.ndarray, class_labels: List[
     for i, species in enumerate(class_labels):
         if species != 'background':  # Skip background class
             total_tp += confusion_matrix[i, i]
-            total_fp += confusion_matrix[:, i].sum() - confusion_matrix[i, i]  # All predictions - TP
-            total_fn += confusion_matrix[i, :].sum() - confusion_matrix[i, i]  # All true instances - TP
+            total_fp += confusion_matrix[i, :].sum() - confusion_matrix[i, i]  # All predictions - TP (row)
+            total_fn += confusion_matrix[:, i].sum() - confusion_matrix[i, i]  # All true instances - TP (column)
     
     # Compute micro-averaged precision and recall
     micro_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
