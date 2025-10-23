@@ -56,7 +56,7 @@ class BirdCallDetector:
     MAX_FREQ = 15000  # Hz
     MIN_FREQ = 50     # Hz
     
-    def __init__(self, model_path: str, conf_threshold: float = 0.25, iou_threshold: float = 0.5, song_gap_threshold: float = 0.5):
+    def __init__(self, model_path: str, conf_threshold: float = 0.001, iou_threshold: float = 0.5, song_gap_threshold: float = 0.5):
         """
         Initialize the bird call detector.
         
@@ -841,13 +841,15 @@ Examples:
         help='Output format: json (default), csv, or all formats'
     )
     
+    # the default value should work perfectly
     parser.add_argument(
         '--conf',
         type=float,
-        default=0.25,
-        help='Confidence threshold for detections (default: 0.25)'
+        default=0.001,
+        help='Confidence threshold for detections (default: 0.001 for comprehensive detection)'
     )
     
+    # this value can be further explored
     parser.add_argument(
         '--iou',
         type=float,
@@ -855,11 +857,12 @@ Examples:
         help='IoU threshold for NMS across time windows (default: 0.5)'
     )
     
+    # this value can be further explored
     parser.add_argument(
         '--song-gap',
         type=float,
-        default=0.5,
-        help='Max gap (seconds) between detections to merge into same song (default: 0.5)'
+        default=0.1,
+        help='Max gap (seconds) between detections to merge into same song (default: 0.1)'
     )
     
     args = parser.parse_args()
