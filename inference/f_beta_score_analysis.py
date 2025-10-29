@@ -664,8 +664,8 @@ Examples:
         nargs=3,
         type=float,
         metavar=('MIN', 'MAX', 'STEP'),
-        default=[0.1, 0.9, 0.1],
-        help='Confidence threshold range: min max step (default: 0.1 0.9 0.1)'
+        default=[0.01, 1.0, 0.01],
+        help='Confidence threshold range: min max step (default: 0.01 1.0 0.01)'
     )
     
     parser.add_argument(
