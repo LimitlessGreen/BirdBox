@@ -25,6 +25,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from collections import defaultdict
 from tqdm import tqdm
+from scipy.optimize import linear_sum_assignment
 
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -50,7 +51,7 @@ class FBetaScoreAnalyzer:
     and computing F-beta scores for each species class.
     """
     
-    def __init__(self, iou_threshold: float = 0.5, beta: float = 1.0, use_max_confidence: bool = True):
+    def __init__(self, iou_threshold: float = 0.5, beta: float = 1.0, use_max_confidence: bool = True, use_optimal_matching: bool = True):
         """
         Initialize the F-beta score analyzer.
         
@@ -58,15 +59,18 @@ class FBetaScoreAnalyzer:
             iou_threshold: IoU threshold for considering detections as matches
             beta: Beta parameter for F-beta score
             use_max_confidence: If True, use max_confidence for filtering; if False, use average confidence
+            use_optimal_matching: If True, use Hungarian algorithm (optimal, order-independent). Recommended for final metrics.
         """
         self.iou_threshold = iou_threshold
         self.beta = beta
         self.use_max_confidence = use_max_confidence
+        self.use_optimal_matching = use_optimal_matching
         self.filter = DetectionFilter(use_max_confidence=use_max_confidence)
         
         print(f"Initialized F-beta analyzer with IoU threshold: {iou_threshold}")
         print(f"Using F-{beta} score")
         print(f"Using {'max' if use_max_confidence else 'average'} confidence for filtering")
+        print(f"Matching method: {'Optimal (Hungarian)' if use_optimal_matching else 'Greedy (order-dependent)'}")
     
     @staticmethod
     def normalize_filename(filename: str) -> str:
@@ -171,9 +175,157 @@ class FBetaScoreAnalyzer:
         
         return filtered
     
+    def match_detections_to_labels_optimal(self, detections: List[Dict], labels: List[Dict], verbose: bool = False) -> Dict[str, Dict]:
+        """
+        Match detections to ground truth labels using optimal matching (Hungarian algorithm).
+        Calculate metrics for each class.
+        
+        This method is ORDER-INDEPENDENT and finds the globally optimal matching.
+        
+        Args:
+            detections: List of filtered detections
+            labels: List of ground truth labels
+            verbose: If True, print detailed matching statistics
+            
+        Returns:
+            Dictionary with metrics for each class
+        """
+        # Group detections and labels by normalized filename
+        detections_by_file = defaultdict(list)
+        labels_by_file = defaultdict(list)
+        
+        for det in detections:
+            filename = det.get('filename', 'unknown')
+            normalized_filename = self.normalize_filename(filename)
+            detections_by_file[normalized_filename].append(det)
+        
+        for label in labels:
+            filename = label['filename']
+            normalized_filename = self.normalize_filename(filename)
+            labels_by_file[normalized_filename].append(label)
+        
+        # Initialize metrics for each class
+        class_metrics = defaultdict(lambda: {'tp': 0, 'fp': 0, 'fn': 0})
+        
+        # Get all unique species
+        detection_species = set(det['species'] for det in detections)
+        label_species = set(label['species'] for label in labels)
+        all_species = sorted(list(detection_species.union(label_species)))
+        
+        # Debug: Print file matching info
+        all_files = set(detections_by_file.keys()).union(set(labels_by_file.keys()))
+        files_with_both = set(detections_by_file.keys()).intersection(set(labels_by_file.keys()))
+        
+        if verbose or len(files_with_both) == 0:
+            print(f"\nFile matching statistics:")
+            print(f"  Total unique files (normalized): {len(all_files)}")
+            print(f"  Files with detections: {len(detections_by_file)}")
+            print(f"  Files with labels: {len(labels_by_file)}")
+            print(f"  Files with both: {len(files_with_both)}")
+            if len(files_with_both) == 0:
+                print(f"  WARNING: No matching files found! Check filename formats.")
+                if detections_by_file and labels_by_file:
+                    print(f"  Example detection file: {list(detections_by_file.keys())[0]}")
+                    print(f"  Example label file: {list(labels_by_file.keys())[0]}")
+        
+        # Process each file
+        for filename in all_files:
+            file_detections = detections_by_file.get(filename, [])
+            file_labels = labels_by_file.get(filename, [])
+            
+            # Group by species
+            detections_by_species = defaultdict(list)
+            labels_by_species = defaultdict(list)
+            
+            for det in file_detections:
+                detections_by_species[det['species']].append(det)
+            
+            for label in file_labels:
+                labels_by_species[label['species']].append(label)
+            
+            # Process each species using optimal matching
+            for species in all_species:
+                species_detections = detections_by_species[species]
+                species_labels = labels_by_species[species]
+                
+                if not species_detections and not species_labels:
+                    continue
+                
+                if not species_detections:
+                    # Only labels, all are FN
+                    class_metrics[species]['fn'] += len(species_labels)
+                    continue
+                
+                if not species_labels:
+                    # Only detections, all are FP
+                    class_metrics[species]['fp'] += len(species_detections)
+                    continue
+                
+                # Build cost matrix for Hungarian algorithm
+                n_det = len(species_detections)
+                n_lab = len(species_labels)
+                cost_matrix = np.full((n_det, n_lab), 1e6)  # High cost = no match
+                
+                for i, detection in enumerate(species_detections):
+                    for j, label in enumerate(species_labels):
+                        # Compute 2D IoU (time-frequency)
+                        iou = compute_2d_iou(
+                            detection['time_start'], detection['time_end'],
+                            detection['freq_low_hz'], detection['freq_high_hz'],
+                            label['start_time'], label['end_time'],
+                            label['freq_low'], label['freq_high']
+                        )
+                        
+                        # Set cost (negative IoU if above threshold)
+                        if iou >= self.iou_threshold:
+                            cost_matrix[i, j] = -iou
+                
+                # Find optimal matching
+                det_indices, lab_indices = linear_sum_assignment(cost_matrix)
+                
+                # Count matches
+                matched_labels = set()
+                for i, j in zip(det_indices, lab_indices):
+                    if cost_matrix[i, j] < 0:  # Valid match
+                        class_metrics[species]['tp'] += 1
+                        matched_labels.add(j)
+                    else:
+                        # Detection didn't meet threshold
+                        class_metrics[species]['fp'] += 1
+                
+                # Unmatched detections are FP
+                class_metrics[species]['fp'] += n_det - len(det_indices)
+                
+                # Unmatched labels are FN
+                class_metrics[species]['fn'] += n_lab - len(matched_labels)
+        
+        return dict(class_metrics)
+    
     def match_detections_to_labels(self, detections: List[Dict], labels: List[Dict], verbose: bool = False) -> Dict[str, Dict]:
         """
         Match detections to ground truth labels and calculate metrics for each class.
+        
+        Uses either optimal matching (Hungarian algorithm) or greedy matching based on
+        the use_optimal_matching flag set during initialization.
+        
+        Args:
+            detections: List of filtered detections
+            labels: List of ground truth labels
+            verbose: If True, print detailed matching statistics
+            
+        Returns:
+            Dictionary with metrics for each class
+        """
+        # Dispatch to optimal or greedy matching
+        if self.use_optimal_matching:
+            return self.match_detections_to_labels_optimal(detections, labels, verbose)
+        else:
+            return self.match_detections_to_labels_greedy(detections, labels, verbose)
+    
+    def match_detections_to_labels_greedy(self, detections: List[Dict], labels: List[Dict], verbose: bool = False) -> Dict[str, Dict]:
+        """
+        Match detections to ground truth labels using greedy matching (order-dependent).
+        Calculate metrics for each class.
         
         Args:
             detections: List of filtered detections
@@ -689,6 +841,14 @@ Examples:
     )
     
     parser.add_argument(
+        '--no-optimal-matching',
+        action='store_true',
+        help='Use greedy matching instead of optimal matching (Hungarian algorithm). '
+             'Not recommended: greedy matching is order-dependent and suboptimal. '
+             'Default: use optimal matching for reproducible results.'
+    )
+    
+    parser.add_argument(
         '--no-plot',
         action='store_true',
         help='Skip generating plots'
@@ -717,7 +877,8 @@ Examples:
     analyzer = FBetaScoreAnalyzer(
         iou_threshold=args.iou_threshold,
         beta=args.beta,
-        use_max_confidence=not args.use_avg_confidence
+        use_max_confidence=not args.use_avg_confidence,
+        use_optimal_matching=not args.no_optimal_matching
     )
     
     # Generate confidence thresholds
