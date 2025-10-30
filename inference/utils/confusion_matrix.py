@@ -8,8 +8,9 @@ compute confusion matrices, and visualize the results.
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 from collections import defaultdict
+from scipy.optimize import linear_sum_assignment
 
 
 def compute_1d_iou(start1: float, end1: float, start2: float, end2: float) -> float:
@@ -85,11 +86,32 @@ def compute_2d_iou(time_start1: float, time_end1: float, freq_low1: float, freq_
     return intersection_area / union_area
 
 
-def match_detections_to_labels(detections: List[Dict], labels: List[Dict], 
-                               iou_threshold: float = 0.5, 
-                               use_2d_iou: bool = True) -> Tuple[List[Tuple[int, int, float]], List[int], List[int]]:
+def has_time_overlap(start1: float, end1: float, start2: float, end2: float) -> bool:
     """
-    Match detections to ground truth labels using IoU.
+    Check if two time intervals overlap.
+    
+    Args:
+        start1: Start time of first interval
+        end1: End time of first interval
+        start2: Start time of second interval
+        end2: End time of second interval
+        
+    Returns:
+        True if intervals overlap, False otherwise
+    """
+    return start1 < end2 and start2 < end1
+
+
+def match_detections_to_labels_optimal(detections: List[Dict], labels: List[Dict],
+                                       iou_threshold: float = 0.5,
+                                       use_2d_iou: bool = True) -> Tuple[List[Tuple[int, int, float]], List[int], List[int]]:
+    """
+    Match detections to ground truth labels using optimal bipartite matching (Hungarian algorithm).
+    
+    This method finds the globally optimal matching that maximizes the total IoU across all matches.
+    Unlike the greedy approach, this is ORDER-INDEPENDENT and gives consistent results.
+    
+    OPTIMIZED VERSION: Groups by filename for efficiency.
     
     Args:
         detections: List of detection dictionaries
@@ -103,24 +125,171 @@ def match_detections_to_labels(detections: List[Dict], labels: List[Dict],
         - unmatched_detections: List of detection indices with no match
         - unmatched_labels: List of label indices with no match
     """
+    from pathlib import Path
+    
     matches = []
     matched_detections = set()
     matched_labels = set()
     
-    # For each detection, find the best matching label
+    # Group labels by filename for efficiency
+    labels_by_file = defaultdict(list)
+    print("Grouping labels by filename...")
+    for label_idx, label in enumerate(labels):
+        filename = Path(label['filename']).stem
+        labels_by_file[filename].append((label_idx, label))
+    
+    # Group detections by filename
+    detections_by_file = defaultdict(list)
+    print("Grouping detections by filename...")
     for det_idx, detection in enumerate(detections):
+        filename = Path(detection['filename']).stem
+        detections_by_file[filename].append((det_idx, detection))
+    
+    print(f"Processing {len(detections_by_file)} unique files with optimal matching...")
+    
+    # Process each file separately
+    file_count = 0
+    for filename in detections_by_file.keys():
+        file_count += 1
+        if file_count % 100 == 0:
+            print(f"  Processed {file_count}/{len(detections_by_file)} files...")
+        
+        file_detections = detections_by_file[filename]
+        file_labels = labels_by_file.get(filename, [])
+        
+        if not file_labels:
+            continue
+        
+        n_det = len(file_detections)
+        n_lab = len(file_labels)
+        
+        # Build cost matrix (negative IoU for maximization, since linear_sum_assignment minimizes)
+        cost_matrix = np.full((n_det, n_lab), 1e6)  # High cost = no match
+        
+        for i, (det_idx, detection) in enumerate(file_detections):
+            det_start = detection.get('time_start', detection.get('start_time'))
+            det_end = detection.get('time_end', detection.get('end_time'))
+            
+            for j, (label_idx, label) in enumerate(file_labels):
+                # Compute IoU
+                if use_2d_iou:
+                    iou = compute_2d_iou(
+                        det_start, det_end,
+                        detection.get('freq_low_hz', detection.get('freq_low')),
+                        detection.get('freq_high_hz', detection.get('freq_high')),
+                        label.get('start_time'),
+                        label.get('end_time'),
+                        label.get('freq_low'),
+                        label.get('freq_high')
+                    )
+                else:
+                    iou = compute_1d_iou(
+                        det_start, det_end,
+                        label.get('start_time'),
+                        label.get('end_time')
+                    )
+                
+                # Set cost (negative IoU if above threshold, high cost otherwise)
+                if iou >= iou_threshold:
+                    cost_matrix[i, j] = -iou
+        
+        # Find optimal matching using Hungarian algorithm
+        det_indices, lab_indices = linear_sum_assignment(cost_matrix)
+        
+        # Extract valid matches (those that meet the threshold)
+        for i, j in zip(det_indices, lab_indices):
+            if cost_matrix[i, j] < 0:  # Valid match (IoU >= threshold)
+                det_idx = file_detections[i][0]
+                label_idx = file_labels[j][0]
+                iou = -cost_matrix[i, j]
+                matches.append((det_idx, label_idx, iou))
+                matched_detections.add(det_idx)
+                matched_labels.add(label_idx)
+    
+    print(f"Matched {len(matches)} detection-label pairs")
+    
+    # Find unmatched detections and labels
+    unmatched_detections = [i for i in range(len(detections)) if i not in matched_detections]
+    unmatched_labels = [i for i in range(len(labels)) if i not in matched_labels]
+    
+    print(f"Unmatched detections: {len(unmatched_detections)}")
+    print(f"Unmatched labels: {len(unmatched_labels)}")
+    
+    return matches, unmatched_detections, unmatched_labels
+
+
+def match_detections_to_labels(detections: List[Dict], labels: List[Dict], 
+                               iou_threshold: float = 0.5, 
+                               use_2d_iou: bool = True) -> Tuple[List[Tuple[int, int, float]], List[int], List[int]]:
+    """
+    Match detections to ground truth labels using IoU.
+    
+    OPTIMIZED VERSION: Groups by filename and uses early exit conditions.
+    
+    Args:
+        detections: List of detection dictionaries
+        labels: List of ground truth label dictionaries
+        iou_threshold: Minimum IoU to consider a match
+        use_2d_iou: If True, use 2D IoU (time-frequency), otherwise use 1D IoU (time only)
+        
+    Returns:
+        Tuple of (matches, unmatched_detections, unmatched_labels)
+        - matches: List of (detection_idx, label_idx, iou) tuples
+        - unmatched_detections: List of detection indices with no match
+        - unmatched_labels: List of label indices with no match
+    """
+    from pathlib import Path
+    
+    matches = []
+    matched_detections = set()
+    matched_labels = set()
+    
+    # OPTIMIZATION: Group labels by filename for fast lookup
+    # This avoids comparing detections and labels from different files
+    labels_by_file = defaultdict(list)
+    
+    print("Grouping labels by filename...")
+    for label_idx, label in enumerate(labels):
+        filename = Path(label['filename']).stem
+        labels_by_file[filename].append((label_idx, label))
+    
+    print(f"Processing {len(detections)} detections...")
+    
+    # Process detections in their original order to maintain deterministic behavior
+    # This ensures results match the original non-optimized implementation
+    for det_idx, detection in enumerate(detections):
+        if det_idx % 1000 == 0 and det_idx > 0:
+            print(f"  Processed {det_idx}/{len(detections)} detections...")
+        
+        if det_idx in matched_detections:
+            continue
+        
+        # Get filename for this detection
+        filename = Path(detection['filename']).stem
+        
+        # Get labels for the same file
+        file_labels = labels_by_file.get(filename, [])
+        
+        if not file_labels:
+            # No labels for this file, detection is unmatched
+            continue
+        
         best_match = None
         best_iou = 0
         
-        for label_idx, label in enumerate(labels):
+        # Get detection time bounds
+        det_start = detection.get('time_start', detection.get('start_time'))
+        det_end = detection.get('time_end', detection.get('end_time'))
+        
+        # Only compare with labels from the same file
+        for label_idx, label in file_labels:
             if label_idx in matched_labels:
                 continue
             
             # Compute IoU
             if use_2d_iou:
                 iou = compute_2d_iou(
-                    detection.get('time_start', detection.get('start_time')), 
-                    detection.get('time_end', detection.get('end_time')),
+                    det_start, det_end,
                     detection.get('freq_low_hz', detection.get('freq_low')), 
                     detection.get('freq_high_hz', detection.get('freq_high')),
                     label.get('start_time'), 
@@ -130,8 +299,7 @@ def match_detections_to_labels(detections: List[Dict], labels: List[Dict],
                 )
             else:
                 iou = compute_1d_iou(
-                    detection.get('time_start', detection.get('start_time')), 
-                    detection.get('time_end', detection.get('end_time')),
+                    det_start, det_end, 
                     label.get('start_time'), 
                     label.get('end_time')
                 )
@@ -146,9 +314,14 @@ def match_detections_to_labels(detections: List[Dict], labels: List[Dict],
             matched_detections.add(det_idx)
             matched_labels.add(best_match)
     
+    print(f"Matched {len(matches)} detection-label pairs")
+    
     # Find unmatched detections and labels
     unmatched_detections = [i for i in range(len(detections)) if i not in matched_detections]
     unmatched_labels = [i for i in range(len(labels)) if i not in matched_labels]
+    
+    print(f"Unmatched detections: {len(unmatched_detections)}")
+    print(f"Unmatched labels: {len(unmatched_labels)}")
     
     return matches, unmatched_detections, unmatched_labels
 
@@ -157,7 +330,8 @@ def build_confusion_matrix(detections: List[Dict], labels: List[Dict],
                           species_list: List[str],
                           iou_threshold: float = 0.5,
                           use_2d_iou: bool = True,
-                          include_background: bool = True) -> np.ndarray:
+                          include_background: bool = True,
+                          use_optimal_matching: bool = False) -> np.ndarray:
     """
     Build a confusion matrix from detections and labels.
     
@@ -168,6 +342,8 @@ def build_confusion_matrix(detections: List[Dict], labels: List[Dict],
         iou_threshold: Minimum IoU to consider a match
         use_2d_iou: If True, use 2D IoU (time-frequency), otherwise use 1D IoU (time only)
         include_background: If True, include background class for FP/FN
+        use_optimal_matching: If True, use Hungarian algorithm (optimal, order-independent).
+                            If False, use greedy matching (faster, order-dependent).
         
     Returns:
         Confusion matrix as numpy array of shape (n_classes, n_classes)
@@ -186,9 +362,16 @@ def build_confusion_matrix(detections: List[Dict], labels: List[Dict],
     confusion_matrix = np.zeros((n_classes, n_classes), dtype=int)
     
     # Match detections to labels
-    matches, unmatched_detections, unmatched_labels = match_detections_to_labels(
-        detections, labels, iou_threshold, use_2d_iou
-    )
+    if use_optimal_matching:
+        print("\nUsing optimal matching (Hungarian algorithm)...")
+        matches, unmatched_detections, unmatched_labels = match_detections_to_labels_optimal(
+            detections, labels, iou_threshold, use_2d_iou
+        )
+    else:
+        print("\nUsing greedy matching...")
+        matches, unmatched_detections, unmatched_labels = match_detections_to_labels(
+            detections, labels, iou_threshold, use_2d_iou
+        )
     
     # Process matches (true positives or class confusion)
     for det_idx, label_idx, iou in matches:

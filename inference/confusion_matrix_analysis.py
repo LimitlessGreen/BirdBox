@@ -242,6 +242,14 @@ Example:
     )
     
     parser.add_argument(
+        '--use-optimal-matching',
+        action='store_true',
+        help='Use optimal matching (Hungarian algorithm) instead of greedy matching. '
+             'Optimal matching is order-independent and finds the globally best matches, '
+             'but may be slightly slower. Recommended for final evaluation metrics.'
+    )
+    
+    parser.add_argument(
         '--output-dir',
         type=str,
         default='inference/confusion_matrix_analysis',
@@ -258,6 +266,7 @@ Example:
     print(f"Labels: {args.labels}")
     print(f"IoU threshold: {args.iou_threshold}")
     print(f"IoU type: {'1D (time only)' if args.use_1d_iou else '2D (time-frequency)'}")
+    print(f"Matching method: {'Optimal (Hungarian)' if args.use_optimal_matching else 'Greedy'}")
     print(f"Include background: {not args.no_background}")
     print(f"Output directory: {args.output_dir}")
     print("="*80)
@@ -292,7 +301,8 @@ Example:
         species_list=species_list,
         iou_threshold=args.iou_threshold,
         use_2d_iou=not args.use_1d_iou,
-        include_background=not args.no_background
+        include_background=not args.no_background,
+        use_optimal_matching=args.use_optimal_matching
     )
     
     # Print confusion matrix
@@ -357,6 +367,7 @@ Example:
         'labels_file': args.labels,
         'iou_threshold': args.iou_threshold,
         'iou_type': '1D (time only)' if args.use_1d_iou else '2D (time-frequency)',
+        'matching_method': 'Optimal (Hungarian)' if args.use_optimal_matching else 'Greedy',
         'include_background': not args.no_background,
         'num_detections': len(detections),
         'num_labels': len(labels),
