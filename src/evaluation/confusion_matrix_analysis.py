@@ -8,12 +8,12 @@ over Union) and creates a confusion matrix showing how well the model performs
 for each species class.
 
 Usage:
-    python confusion_matrix_analysis.py --detections <path_to_detections.csv> --labels <path_to_labels.csv>
+    python src/evaluation/confusion_matrix_analysis.py --detections <path_to_detections.csv> --labels <path_to_labels.csv>
     
 Example:
-    python confusion_matrix_analysis.py \
-        --detections inference/filtered_detections_hawaii/filtered_detections.csv \
-        --labels inference/test_data/labels.csv
+    python src/evaluation/confusion_matrix_analysis.py \
+        --detections results/filtered_detections/filtered_detections.csv \
+        --labels data/labels.csv
 """
 
 import os
@@ -404,9 +404,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Example:
-    python confusion_matrix_analysis.py \\
-        --detections inference/filtered_detections_hawaii/filtered_detections.csv \\
-        --labels inference/test_data/labels.csv
+    python src/evaluation/confusion_matrix_analysis.py \\
+        --detections results/filtered_detections/filtered_detections.csv \\
+        --labels data/labels.csv
         """
     )
     

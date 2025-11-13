@@ -782,17 +782,20 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic F1-score analysis with default confidence range (saves to inference/f_1.0_analysis/)
-  python inference/f_beta_score_analysis.py --detections detections.json --labels labels.csv
+  # Basic F1-score analysis with default confidence range
+  python src/evaluation/f_beta_score_analysis.py --detections detections.json --labels labels.csv
   
-  # F2-score analysis (emphasizes recall, saves to inference/f_2.0_analysis/)
-  python inference/f_beta_score_analysis.py --detections detections.json --labels labels.csv --beta 2.0
+  # F2-score analysis (emphasizes recall)
+  python src/evaluation/f_beta_score_analysis.py --detections detections.json --labels labels.csv --beta 2.0
   
   # Custom confidence range with finer steps
-  python inference/f_beta_score_analysis.py --detections detections.json --labels labels.csv --conf-range 0.05 0.95 0.05
+  python src/evaluation/f_beta_score_analysis.py --detections detections.json --labels labels.csv --conf-range 0.05 0.95 0.05
   
   # Use average confidence instead of max confidence
-  python inference/f_beta_score_analysis.py --detections detections.json --labels labels.csv --use-avg-confidence
+  python src/evaluation/f_beta_score_analysis.py --detections detections.json --labels labels.csv --use-avg-confidence
+  
+  # Specify custom output path
+  python src/evaluation/f_beta_score_analysis.py --detections detections.json --labels labels.csv --output-path results/my_analysis
         """
     )
     

@@ -7,9 +7,9 @@ and filters it based on a specified confidence threshold. It can filter using ei
 or max confidence from merged detections.
 
 Usage:
-    python inference/filter_detections.py --input all_detections.json --output-path filtered_detections --conf 0.5
-    python inference/filter_detections.py --input all_detections.json --output-path filtered_detections --conf 0.3 --use-max-confidence
-    python inference/filter_detections.py --input all_detections.json --output-path filtered_detections --conf 0.7 --format all
+    python src/evaluation/filter_detections.py --input all_detections.json --output-path results/filtered_detections --conf 0.5
+    python src/evaluation/filter_detections.py --input all_detections.json --output-path results/filtered_detections --conf 0.3 --use-avg-confidence
+    python src/evaluation/filter_detections.py --input all_detections.json --output-path results/filtered_detections --conf 0.7 --format all
 """
 
 import os
@@ -278,16 +278,16 @@ def main():
         epilog="""
 Examples:
   # Filter using max confidence (recommended)
-  python inference/filter_detections.py --input all_detections.json --output-path filtered_detections --conf 0.5
+  python src/evaluation/filter_detections.py --input all_detections.json --output-path results/filtered_detections --conf 0.5
   
   # Filter using average confidence
-  python inference/filter_detections.py --input all_detections.json --output-path filtered_detections --conf 0.3 --use-avg-confidence
+  python src/evaluation/filter_detections.py --input all_detections.json --output-path results/filtered_detections --conf 0.3 --use-avg-confidence
   
   # Save in all formats
-  python inference/filter_detections.py --input all_detections.json --output-path filtered_detections --conf 0.7 --format all
+  python src/evaluation/filter_detections.py --input all_detections.json --output-path results/filtered_detections --conf 0.7 --format all
   
   # Save only CSV (for evaluation)
-  python inference/filter_detections.py --input all_detections.json --output-path filtered_detections --conf 0.4 --format csv
+  python src/evaluation/filter_detections.py --input all_detections.json --output-path results/filtered_detections --conf 0.4 --format csv
         """
     )
     

@@ -7,9 +7,9 @@ and detects bird calls using a trained YOLO model. It returns timestamped detect
 with species labels and confidence scores.
 
 Usage:
-    python inference/detect_birds.py --audio path/to/audio.wav --model path/to/model.pt
-    python inference/detect_birds.py --audio audio.wav --model model.pt --output detections.json
-    python inference/detect_birds.py --audio audio.wav --model model.pt --conf 0.25 --iou 0.5
+    python src/inference/detect_birds.py --audio path/to/audio.wav --model path/to/model.pt
+    python src/inference/detect_birds.py --audio audio.wav --model model.pt --output-path results
+    python src/inference/detect_birds.py --audio audio.wav --model model.pt --conf 0.25 --iou 0.5
 """
 
 import os
@@ -63,7 +63,7 @@ class BirdCallDetector:
             model_path: Path to the trained YOLO model (.pt, .onnx, .engine, etc.)
             conf_threshold: Confidence threshold for detections (0-1)
             iou_threshold: IoU threshold for NMS across time windows (0-1)
-            song_gap_threshold: Max gap (seconds) between detections to merge into same song (default: 2.0)
+            song_gap_threshold: Max gap (seconds) between detections to merge into same song (default: 0.5)
         """
         self.model = YOLO(model_path)
         self.conf_threshold = conf_threshold
@@ -791,22 +791,22 @@ def main():
         epilog="""
 Examples:
   # Basic detection (single file)
-  python inference/detect_birds.py --audio recording.wav --model final_models/best.pt
+  python src/inference/detect_birds.py --audio recording.wav --model final_models/best.pt
   
   # Process entire folder of WAV files
-  python inference/detect_birds.py --audio /path/to/audio/folder --model best.pt --output-path results --output-format all
+  python src/inference/detect_birds.py --audio /path/to/audio/folder --model best.pt --output-path results --output-format all
   
-  # Save results to JSON (new format)
-  python inference/detect_birds.py --audio recording.wav --model best.pt --output-path results --output-format json
+  # Save results to JSON
+  python src/inference/detect_birds.py --audio recording.wav --model best.pt --output-path results --output-format json
   
   # Save results to CSV
-  python inference/detect_birds.py --audio recording.wav --model best.pt --output-path results --output-format csv
+  python src/inference/detect_birds.py --audio recording.wav --model best.pt --output-path results --output-format csv
   
   # Save all formats
-  python inference/detect_birds.py --audio recording.wav --model best.pt --output-path results --output-format all
+  python src/inference/detect_birds.py --audio recording.wav --model best.pt --output-path results --output-format all
   
   # Adjust thresholds
-  python inference/detect_birds.py --audio audio.wav --model best.pt --conf 0.5 --iou 0.3
+  python src/inference/detect_birds.py --audio audio.wav --model best.pt --conf 0.5 --iou 0.3
         """
     )
     
