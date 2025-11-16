@@ -1,8 +1,5 @@
 __pycache__/
 
-# YOLO models
-models/
-
 datasets/
 
 results/
