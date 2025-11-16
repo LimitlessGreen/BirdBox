@@ -1,8 +1,10 @@
 #################################################################################################################
-### This file contains the configuration for the inference as well as for the evaluation of the detections    ###
+### This file contains the configuration for the inference as well as for the evaluation of the detections.   ###
+### Only change these settings if you want to use a model that is trained with different values.              ###
 #################################################################################################################
 
-### Has to be adapted if the underlying dataset is changed ###
+
+### change this to the dataset you want to use ###
 # DATASET_NAME = 'Hawaii'
 DATASET_NAME = 'Hawaii_subset'
 # DATASET_NAME = 'Northeastern-US'
@@ -11,13 +13,16 @@ DATASET_NAME = 'Hawaii_subset'
 # DATASET_NAME = 'Western-US'
 
 
+#################################################################################################################
+### If you just use the provided models, you can leave the following parameters as they are.                  ###
+#################################################################################################################
+
 # height and width of the spectrograms
 HEIGHT_AND_WIDTH_IN_PIXELS:int = 256
 
 CLIP_LENGTH:int = 3
 
 PCEN_SEGMENT_LENGTH:int = 60
-
 
 # this has to match the definition in the conf.yaml of which the model is trained with
 if DATASET_NAME == 'Hawaii' or DATASET_NAME == 'Hawaii_subset':
