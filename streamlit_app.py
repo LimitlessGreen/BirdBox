@@ -323,11 +323,11 @@ def main():
     
     conf_threshold = st.sidebar.slider(
         "Confidence Threshold",
-        min_value=0.001,
+        min_value=0.01,
         max_value=1.0,
-        value=0.001,
-        step=0.001,
-        format="%.3f",
+        value=0.25,
+        step=0.01,
+        format="%.2f",
         help="Minimum confidence score for detections (lower = more detections)"
     )
     
