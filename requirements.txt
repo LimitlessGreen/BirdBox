@@ -16,3 +16,7 @@ seaborn==0.13.2  # Optional: enhanced plotting
 
 # Progress bars and utilities
 tqdm==4.67.1
+
+# Web app
+streamlit==1.51.0
+Pillow==12.0.0

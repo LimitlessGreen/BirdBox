@@ -50,6 +50,29 @@ pip install -r requirements.txt
 
 ### Basic Usage, i. e. run detection on audio
 
+#### Option 1: Web Interface (Streamlit App)
+
+The easiest way to use BirdBox is through the interactive web interface:
+
+```bash
+# Quick start - run the Streamlit app
+./run_streamlit.sh
+
+# Or manually:
+streamlit run streamlit_app.py
+```
+
+Then open your browser to `http://localhost:8501` and:
+- Upload audio files (WAV, FLAC, OGG, MP3)
+- Select a model from the dropdown
+- Adjust detection parameters with sliders
+- View PCEN spectrograms with bounding boxes
+- Download results as JSON or CSV
+
+See [STREAMLIT_APP.md](STREAMLIT_APP.md) for detailed usage guide.
+
+#### Option 2: Command Line Interface
+
 ```bash
 # Detect birds in a single audio file (supports WAV, FLAC, OGG, MP3)
 python src/inference/detect_birds.py \
