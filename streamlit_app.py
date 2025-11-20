@@ -138,43 +138,80 @@ def create_full_spectrogram_visualization(
     target_sr = settings["sr"]  # 32000 Hz
     hop_length = settings["hop_length"]
     
-    # Resample audio if needed (same as in detect_birds.py)
+    # Validate audio
+    librosa.util.valid_audio(audio)
+    
+    # Map to the range [-2**31, 2**31[ (same as training)
+    audio = (audio * (2 ** 31)).astype("float32")
+    
+    # Resample if needed (same as in training)
     if sr != target_sr:
         audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
         sr = target_sr
     
-    # Compute PCEN for the entire audio as a continuous spectrogram
-    # Map to the range used in PCEN processing
-    audio_scaled = (audio * (2 ** 31)).astype("float32")
+    # Pre-pad with ~0.5s of repeated audio (same as training)
+    pad_len = int(settings["left_pad_length"] * sr)
+    audio_padded = np.concatenate([audio[:pad_len], audio])
     
-    # Compute mel spectrogram
-    mel_spec = librosa.feature.melspectrogram(
-        y=audio_scaled,
+    # Compute Short-Term Fourier Transform (STFT) - same as training
+    stft = librosa.stft(
+        audio_padded,
+        n_fft=settings["n_fft"],
+        win_length=settings["win_length"],
+        hop_length=hop_length,
+        window=settings["window"],
+        center=False,
+    )
+    
+    # Compute squared magnitude coefficients
+    abs2_stft = np.abs(stft) ** 2
+    del stft  # Free memory
+    
+    # Gather frequency bins according to the Mel scale (same as training)
+    melspec = librosa.feature.melspectrogram(
+        S=abs2_stft,
         sr=sr,
         n_fft=settings["n_fft"],
-        hop_length=hop_length,
         n_mels=settings["n_mels"],
         fmin=settings["fmin"],
         fmax=settings["fmax"],
         htk=True,
-        norm=None
     )
+    del abs2_stft  # Free memory
     
-    # Apply PCEN (same parameters as in pcen_inference.py)
-    pcen_data = librosa.pcen(
-        mel_spec,
+    # Loop the spectrogram in time domain to avoid PCEN initialization artifacts (same as training)
+    loop_length = min(100, melspec.shape[1] // 4)  # Loop first 25% or 100 frames
+    if loop_length > 0:
+        melspec_looped = np.concatenate([melspec[:, :loop_length], melspec], axis=1)
+        del melspec  # Free memory
+    else:
+        melspec_looped = melspec
+    
+    # Compute PCEN (same parameters as training)
+    pcen_looped = librosa.pcen(
+        melspec_looped,
         sr=sr,
         hop_length=hop_length,
         gain=settings["pcen_norm_exponent"],
         bias=settings["pcen_delta"],
         power=settings["pcen_power"],
-        time_constant=settings["pcen_time_constant"]
+        time_constant=settings["pcen_time_constant"],
     )
+    del melspec_looped  # Free memory
+    
+    # Extract the original segment (skip the looped part)
+    pcen_segment = pcen_looped[:, loop_length:] if loop_length > 0 else pcen_looped
+    del pcen_looped  # Free memory
+    
+    # Drop padded frames (same as training)
+    pad_frames = pad_len // hop_length
+    pcen_data = pcen_segment[:, pad_frames:].astype("float32")
+    del pcen_segment  # Free memory
     
     # Get spectrogram dimensions
     n_mels, n_time = pcen_data.shape
     
-    # Calculate actual duration based on the audio length
+    # Calculate actual duration based on the audio length (before padding)
     duration = len(audio) / sr
     
     # Create figure - wide for scrolling, without axes
