@@ -11,11 +11,13 @@ import sys
 import tempfile
 import json
 import base64
+import random
 from pathlib import Path
 from typing import List, Dict
 import io
 
 import streamlit as st
+import streamlit.components.v1 as components
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -450,12 +452,8 @@ def main():
                     audio, sr = detector.load_audio(tmp_audio_path)
                     duration = len(audio) / sr
                     
-                    # Display audio player
-                    file_ext = Path(uploaded_file.name).suffix.lower()
-                    st.audio(uploaded_file, format=f'audio/{file_ext[1:]}')
-                    
                     # Run detection with progress bar
-                    st.info(f"Running detection on {duration:.2f} seconds of audio...")
+                    # st.info(f"Running detection on {duration:.2f} seconds of audio...")
                     progress_bar = st.progress(0)
                     progress_text = st.empty()
                     
@@ -478,7 +476,7 @@ def main():
                     st.session_state['detector'] = detector
                     st.session_state['tmp_audio_path'] = tmp_audio_path
                     
-                    st.success(f"✅ Detection complete! Found {len(detections)} bird call segments.")
+                    st.success(f"Detection complete! Found {len(detections)} bird call segments.")
                     
                 except Exception as e:
                     st.error(f"Error processing audio: {e}")
@@ -493,7 +491,83 @@ def main():
         detector = st.session_state['detector']
         
         st.markdown("---")
-        st.header("📈 Detection Results")
+        # st.header("Detection Results")
+        
+        # PCEN Spectrogram with Detections (shown first)
+        st.subheader("PCEN Spectrogram with Detections - Scroll horizontally to navigate through the audio timeline")
+        
+        duration = len(audio) / sr
+        st.write(f"**Audio duration:** {duration:.1f}s | **Detections:** {len(detections)}")
+        
+        with st.spinner("Generating spectrogram..."):
+            full_spectrogram = create_full_spectrogram_visualization(audio, sr, detections)
+        
+        # Display spectrogram in scrollable container
+        if full_spectrogram:
+            # Convert image to base64 for HTML display
+            buf = io.BytesIO()
+            full_spectrogram.save(buf, format='PNG')
+            buf.seek(0)
+            img_base64 = base64.b64encode(buf.read()).decode()
+            
+            # Create horizontally scrollable container with mouse wheel scrolling
+            components.html(
+                f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body {{
+                            margin: 0;
+                            padding: 0;
+                            overflow: hidden;
+                        }}
+                        #spectrogram-container {{
+                            overflow-x: auto;
+                            overflow-y: hidden;
+                            border: 1px solid #ddd;
+                            border-radius: 5px;
+                            background-color: #000;
+                            width: 100%;
+                            height: 620px;
+                        }}
+                        #spectrogram-container img {{
+                            height: 600px;
+                            width: auto;
+                            display: block;
+                        }}
+                    </style>
+                </head>
+                <body>
+                    <div id="spectrogram-container">
+                        <img src="data:image/png;base64,{img_base64}" alt="Spectrogram">
+                    </div>
+                    <script>
+                        const container = document.getElementById('spectrogram-container');
+                        container.addEventListener('wheel', function(e) {{
+                            if (Math.abs(e.deltaY) > 0) {{
+                                e.preventDefault();
+                                container.scrollLeft += e.deltaY;
+                            }}
+                        }}, {{ passive: false }});
+                    </script>
+                </body>
+                </html>
+                """,
+                height=630,
+                scrolling=False
+            )
+            # st.caption("Scroll horizontally to navigate through the audio timeline")
+        
+        # Vertical spacer (adjust height value to customize spacing)
+        st.markdown('<div style="margin-top: 10px;"></div>', unsafe_allow_html=True)
+        
+        # Audio player
+        if uploaded_file is not None:
+            file_ext = Path(uploaded_file.name).suffix.lower()
+            st.audio(uploaded_file, format=f'audio/{file_ext[1:]}')
+        
+        st.markdown("---")
         
         # Summary statistics
         col1, col2, col3, col4 = st.columns(4)
@@ -544,38 +618,9 @@ def main():
                 plt.tight_layout()
                 st.pyplot(fig)
         
-        # Spectrograms with bounding boxes
-        st.markdown("---")
-        st.subheader("🎵 PCEN Spectrogram with Detections")
-        
-        duration = len(audio) / sr
-        st.write(f"**Audio duration:** {duration:.1f}s | **Detections:** {len(detections)}")
-        
-        with st.spinner("Generating spectrogram..."):
-            full_spectrogram = create_full_spectrogram_visualization(audio, sr, detections)
-        
-        # Display spectrogram in scrollable container
-        if full_spectrogram:
-            # Convert image to base64 for HTML display
-            buf = io.BytesIO()
-            full_spectrogram.save(buf, format='PNG')
-            buf.seek(0)
-            img_base64 = base64.b64encode(buf.read()).decode()
-            
-            # Create horizontally scrollable container
-            st.markdown(
-                f"""
-                <div style="overflow-x: auto; overflow-y: hidden; border: 1px solid #ddd; border-radius: 5px; background-color: #000;">
-                    <img src="data:image/png;base64,{img_base64}" style="height: 600px; width: auto; display: block; max-width: none;">
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            st.caption("💡 Scroll horizontally to navigate through the audio timeline")
-        
         # Detection table
         st.markdown("---")
-        st.subheader("📋 Detailed Detection Table")
+        st.subheader("Detailed Detection Table")
         
         df = format_detections_for_table(detections)
         if not df.empty:
