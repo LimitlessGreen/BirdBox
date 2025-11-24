@@ -389,7 +389,7 @@ def main():
     conf_threshold = st.sidebar.slider(
         "Confidence Threshold",
         min_value=0.01,
-        max_value=1.0,
+        max_value=0.8,
         value=0.25,
         step=0.01,
         format="%.2f",
@@ -409,7 +409,7 @@ def main():
         min_value=0.0,
         max_value=2.0,
         value=0.1,
-        step=0.1,
+        step=0.01,
         help="""
         Maximum gap between detections to merge into same song.\\
         Decrease to retrieve more individual detections.\\
@@ -417,6 +417,18 @@ def main():
         Recommended: 0.1s for most species, adjust based on species vocalization patterns.
         """
     )
+    
+    # Check if model has changed and clear results if it has
+    if 'previous_model' in st.session_state:
+        if st.session_state['previous_model'] != selected_model and 'detections' in st.session_state:
+            # Model changed - clear results so user can re-run with new model
+            for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'just_completed']:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.info("Model changed. Click 'Detect Bird Calls' to run detection with the selected model.")
+    
+    # Store current model for next comparison
+    st.session_state['previous_model'] = selected_model
     
     # Dataset info
     st.sidebar.markdown("---")
@@ -434,7 +446,7 @@ def main():
     # Check if file was removed (user clicked X) and clear all results
     if uploaded_file is None and 'uploaded_filename' in st.session_state:
         # Clear all detection results when file is removed
-        for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'uploaded_filename', 'just_completed']:
+        for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'uploaded_filename', 'just_completed', 'previous_model']:
             if key in st.session_state:
                 del st.session_state[key]
     
@@ -443,7 +455,7 @@ def main():
         current_filename = uploaded_file.name
         if 'uploaded_filename' in st.session_state and st.session_state['uploaded_filename'] != current_filename:
             # Clear all detection results when a new file is uploaded
-            for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'uploaded_filename', 'just_completed']:
+            for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'uploaded_filename', 'just_completed', 'previous_model']:
                 if key in st.session_state:
                     del st.session_state[key]
         
