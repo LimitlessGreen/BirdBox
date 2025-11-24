@@ -424,6 +424,13 @@ def main():
         label_visibility="collapsed"
     )
     
+    # Check if file was removed (user clicked X) and clear all results
+    if uploaded_file is None and 'uploaded_filename' in st.session_state:
+        # Clear all detection results when file is removed
+        for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'uploaded_filename', 'just_completed']:
+            if key in st.session_state:
+                del st.session_state[key]
+    
     # Check if a new file was uploaded and clear previous results
     if uploaded_file is not None:
         current_filename = uploaded_file.name
