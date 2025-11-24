@@ -342,6 +342,22 @@ def main():
     st.title("BirdBox - Bird Call Detection")
     st.markdown("Upload audio files to detect bird calls using trained YOLO models")
     
+    # Custom CSS to fix selectbox dropdown highlighting
+    st.markdown("""
+        <style>
+        /* Style for dropdown options - invert default behavior */
+        [data-baseweb="select"] ul li:hover {
+            background-color: rgb(220, 220, 220) !important;
+        }
+        [data-baseweb="select"] ul li[aria-selected="true"] {
+            background-color: rgb(240, 242, 246) !important;
+        }
+        [data-baseweb="select"] ul li[aria-selected="true"]:hover {
+            background-color: rgb(220, 220, 220) !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
     # Sidebar with logo - using base64 encoding to bypass media server issues
     logo_path = "img/logo_birdbox.png"
     if os.path.exists(logo_path):
