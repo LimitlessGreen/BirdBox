@@ -417,7 +417,7 @@ def main():
         with open(logo_path, "rb") as f:
             logo_base64 = base64.b64encode(f.read()).decode()
         st.sidebar.markdown(
-            f'<img src="data:image/png;base64,{logo_base64}" style="width: 100%; margin-top: -30px;">',
+            f'<img src="data:image/png;base64,{logo_base64}" style="width: 100%; max-width: 280px; margin-top: -30px;">',
             unsafe_allow_html=True
         )
     
@@ -468,7 +468,7 @@ def main():
     # st.sidebar.info(f"**Species Count:** {len(dataset_mappings['id_to_ebird'])}")
     
     # Species list section
-    with st.sidebar.expander("View species list for the selected model", expanded=False):
+    with st.sidebar.expander("view species list for the selected model", expanded=False):
         id_to_ebird = dataset_mappings['id_to_ebird']
         ebird_to_name = dataset_mappings.get('ebird_to_name', {})
         
@@ -499,7 +499,7 @@ def main():
                 common_name = "Unknown"
             
             species_list.append({
-                'Species eBird Code': code,
+                'eBird Code': code,
                 'Scientific Name': scientific_name,
                 'Common Name': common_name
             })
@@ -532,7 +532,7 @@ def main():
             'species_count': len(species_codes),
             'species': [
                 {
-                    'code': row['Species eBird Code'],
+                    'code': row['eBird Code'],
                     'scientific_name': row['Scientific Name'],
                     'common_name': row['Common Name']
                 }
@@ -909,7 +909,7 @@ def main():
                     'End Time (s)': f"{det['time_end']:.1f}",
                     'Low Freq (Hz)': det['freq_low_hz'],
                     'High Freq (Hz)': det['freq_high_hz'],
-                    'Species eBird Code': det['species'],
+                    'eBird Code': det['species'],
                     'Confidence': f"{det['confidence']:.3f}"
                 })
             
