@@ -468,7 +468,7 @@ def main():
     # st.sidebar.info(f"**Species Count:** {len(dataset_mappings['id_to_ebird'])}")
     
     # Species list section
-    with st.sidebar.expander("View Species List", expanded=False):
+    with st.sidebar.expander("View species list for the selected model", expanded=False):
         id_to_ebird = dataset_mappings['id_to_ebird']
         ebird_to_name = dataset_mappings.get('ebird_to_name', {})
         
@@ -515,41 +515,39 @@ def main():
         )
         
         # Download buttons
-        col1, col2 = st.columns(2)
+        # CSV download
+        csv_str = species_df.to_csv(index=False)
+        st.download_button(
+            label="Download as CSV",
+            data=csv_str,
+            file_name=f"{model_dataset}_species_list.csv",
+            mime="text/csv",
+            key="download_species_csv",
+            use_container_width=True
+        )
         
-        with col1:
-            # CSV download
-            csv_str = species_df.to_csv(index=False)
-            st.download_button(
-                label="CSV",
-                data=csv_str,
-                file_name=f"{model_dataset}_species_list.csv",
-                mime="text/csv",
-                key="download_species_csv"
-            )
-        
-        with col2:
-            # JSON download
-            json_data = {
-                'dataset': model_dataset,
-                'species_count': len(species_codes),
-                'species': [
-                    {
-                        'code': row['Species eBird Code'],
-                        'scientific_name': row['Scientific Name'],
-                        'common_name': row['Common Name']
-                    }
-                    for _, row in species_df.iterrows()
-                ]
-            }
-            json_str = json.dumps(json_data, indent=2)
-            st.download_button(
-                label="JSON",
-                data=json_str,
-                file_name=f"{model_dataset}_species_list.json",
-                mime="application/json",
-                key="download_species_json"
-            )
+        # JSON download
+        json_data = {
+            'dataset': model_dataset,
+            'species_count': len(species_codes),
+            'species': [
+                {
+                    'code': row['Species eBird Code'],
+                    'scientific_name': row['Scientific Name'],
+                    'common_name': row['Common Name']
+                }
+                for _, row in species_df.iterrows()
+            ]
+        }
+        json_str = json.dumps(json_data, indent=2)
+        st.download_button(
+            label="Download as JSON",
+            data=json_str,
+            file_name=f"{model_dataset}_species_list.json",
+            mime="application/json",
+            key="download_species_json",
+            use_container_width=True
+        )
     
     # Detection parameters
     st.sidebar.markdown("---")
