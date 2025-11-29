@@ -630,8 +630,11 @@ def main():
     
     # Display max file length info below the uploader
     if uploaded_file is None:
-        st.caption(f"Maximum file length for WebApp showcase: **{MAX_DURATION_MINUTES:.0f} minutes**. Files longer than this will be automatically truncated to the first {MAX_DURATION_MINUTES:.0f} minutes.")
-    
+        st.caption(f"""
+            Maximum file length for WebApp showcase: **{MAX_DURATION_MINUTES:.0f} minutes**. Files longer than this will be automatically truncated to the first {MAX_DURATION_MINUTES:.0f} minutes.\\
+            For huge datasets use the [BirdBox CLI](https://github.com/birdnet-team/BirdBox) instead.    
+        """)
+
     # Check if file was removed (user clicked X) and clear all results
     if uploaded_file is None and 'uploaded_filename' in st.session_state:
         # Clean up truncated file if it exists
