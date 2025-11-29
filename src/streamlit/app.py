@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from PIL import Image
 import librosa
+import soundfile as sf
 
 # Add src directory to path (go up one level from src/streamlit/app.py to src/)
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -605,7 +606,7 @@ def main():
     
     # Reset if any parameter changed
     if should_reset:
-        for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'just_completed']:
+        for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'just_completed', 'detection_in_progress']:
             if key in st.session_state:
                 del st.session_state[key]
         st.info("Settings changed. Click 'Detect Bird Calls' to run detection with the selected settings.")
@@ -616,17 +617,33 @@ def main():
     st.session_state['previous_song_gap_threshold'] = song_gap_threshold
     
     # Main content area
+    # Get max duration for display
+    MAX_DURATION_SECONDS = config.MAX_DURATION_SECONDS
+    MAX_DURATION_MINUTES = MAX_DURATION_SECONDS / 60
+    
     uploaded_file = st.file_uploader(
         "Choose an audio file",
         type=['wav', 'flac', 'ogg', 'mp3'],
-        help="Supported formats: WAV, FLAC, OGG, MP3 (WAV or FLAC recommended for best results)",
+        help=f"Supported formats: WAV, FLAC, OGG, MP3 (WAV or FLAC recommended for best results). Maximum file length: {MAX_DURATION_MINUTES:.0f} minutes. Longer files will be automatically truncated.",
         label_visibility="collapsed"
     )
     
+    # Display max file length info below the uploader
+    if uploaded_file is None:
+        st.caption(f"Maximum file length for WebApp showcase: **{MAX_DURATION_MINUTES:.0f} minutes**. Files longer than this will be automatically truncated to the first {MAX_DURATION_MINUTES:.0f} minutes.")
+    
     # Check if file was removed (user clicked X) and clear all results
     if uploaded_file is None and 'uploaded_filename' in st.session_state:
+        # Clean up truncated file if it exists
+        truncated_path = st.session_state.get('truncated_audio_path')
+        if truncated_path is not None and os.path.exists(truncated_path):
+            try:
+                os.unlink(truncated_path)
+            except Exception:
+                pass  # Ignore errors during cleanup
+        
         # Clear all detection results when file is removed
-        for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'uploaded_filename', 'just_completed', 'previous_model']:
+        for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'uploaded_filename', 'just_completed', 'previous_model', 'truncated_audio_path', 'original_duration', 'was_truncated', 'detection_in_progress']:
             if key in st.session_state:
                 del st.session_state[key]
     
@@ -634,13 +651,72 @@ def main():
     if uploaded_file is not None:
         current_filename = uploaded_file.name
         if 'uploaded_filename' in st.session_state and st.session_state['uploaded_filename'] != current_filename:
+            # Clean up previous truncated file if it exists
+            truncated_path = st.session_state.get('truncated_audio_path')
+            if truncated_path is not None and os.path.exists(truncated_path):
+                try:
+                    os.unlink(truncated_path)
+                except Exception:
+                    pass  # Ignore errors during cleanup
+            
             # Clear all detection results when a new file is uploaded
-            for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'uploaded_filename', 'just_completed', 'previous_model']:
+            for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'uploaded_filename', 'just_completed', 'previous_model', 'truncated_audio_path', 'original_duration', 'was_truncated', 'detection_in_progress']:
                 if key in st.session_state:
                     del st.session_state[key]
         
         # Store current filename
         st.session_state['uploaded_filename'] = current_filename
+        
+        # Check audio duration and truncate if necessary
+        # Skip if detections already exist (file already processed)
+        if 'detections' not in st.session_state:
+            MAX_DURATION_SECONDS = config.MAX_DURATION_SECONDS
+            MAX_DURATION_MINUTES = MAX_DURATION_SECONDS / 60
+            
+            # Check if we need to process this file (new upload or not yet processed)
+            # Process if we haven't checked duration yet, or if truncated file was deleted
+            truncated_path = st.session_state.get('truncated_audio_path')
+            if 'original_duration' not in st.session_state or (truncated_path is not None and not os.path.exists(truncated_path)):
+                try:
+                    # Load audio from uploaded file to check duration
+                    # Use BytesIO to read from uploaded file directly
+                    audio_bytes = io.BytesIO(uploaded_file.getvalue())
+                    audio_check, sr_check = librosa.load(audio_bytes, sr=None)
+                    original_duration = len(audio_check) / sr_check
+                    
+                    # Store original duration
+                    st.session_state['original_duration'] = original_duration
+                    
+                    # Truncate if longer than MAX_DURATION_SECONDS
+                    if original_duration > MAX_DURATION_SECONDS:
+                        st.session_state['was_truncated'] = True
+                        
+                        # Reload and truncate audio to first MAX_DURATION_SECONDS
+                        audio_bytes.seek(0)  # Reset to beginning
+                        audio_truncated, sr_truncated = librosa.load(
+                            audio_bytes,
+                            sr=None,
+                            duration=MAX_DURATION_SECONDS
+                        )
+                        
+                        # Save truncated audio to a temp file
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp_truncated_file:
+                            tmp_truncated_path = tmp_truncated_file.name
+                        
+                        # Save truncated audio using soundfile (more reliable than librosa.output)
+                        sf.write(tmp_truncated_path, audio_truncated, sr_truncated)
+                        
+                        st.session_state['truncated_audio_path'] = tmp_truncated_path
+                    else:
+                        st.session_state['was_truncated'] = False
+                        st.session_state['truncated_audio_path'] = None
+                        
+                except Exception as e:
+                    # If truncation check fails, continue with original file
+                    st.warning(f"⚠️ Could not check audio duration: {e}. Proceeding with original file.")
+                    st.session_state['was_truncated'] = False
+                    st.session_state['truncated_audio_path'] = None
+                    st.session_state['original_duration'] = None
     
     # Lossy format warning
     if uploaded_file is not None:
@@ -648,62 +724,95 @@ def main():
         if file_ext in ['.mp3', '.ogg']:
             st.warning("⚠️ Lossy format detected. Use WAV/FLAC for best results.")
     
-    # Process button (hide if results already exist)
-    if uploaded_file is not None and 'detections' not in st.session_state:
+    # Persistent truncation warning (show if file was truncated, but hide during and after detection)
+    if (uploaded_file is not None and 
+        st.session_state.get('was_truncated', False) and 
+        not st.session_state.get('detection_in_progress', False) and
+        'detections' not in st.session_state):
+        MAX_DURATION_SECONDS = config.MAX_DURATION_SECONDS
+        MAX_DURATION_MINUTES = MAX_DURATION_SECONDS / 60
+        original_duration = st.session_state.get('original_duration', 0)
+        if original_duration > 0:
+            st.warning(
+                f"⚠️ **Audio file truncated:** The uploaded file is about {original_duration/60:.0f} minutes long. "
+                f"It has been automatically truncated to the first {MAX_DURATION_MINUTES:.0f} minutes for processing. "
+                f"Only the first {MAX_DURATION_MINUTES:.0f} minutes will be analyzed."
+            )
+    
+    # Process button (hide if results already exist or detection in progress)
+    if uploaded_file is not None and 'detections' not in st.session_state and not st.session_state.get('detection_in_progress', False):
         if st.button("Detect Bird Calls", type="primary"):
-            with st.spinner("Processing audio file..."):
-                try:
+            # Set flag immediately to hide button during detection
+            st.session_state['detection_in_progress'] = True
+            st.rerun()
+    
+    # Show detection progress if in progress
+    if st.session_state.get('detection_in_progress', False) and uploaded_file is not None:
+        with st.spinner("Processing audio file..."):
+            try:
+                # Use truncated file if available, otherwise save uploaded file to temporary location
+                truncated_path = st.session_state.get('truncated_audio_path')
+                if truncated_path is not None and os.path.exists(truncated_path):
+                    # Use the pre-truncated file
+                    tmp_audio_path = truncated_path
+                else:
                     # Save uploaded file to temporary location
                     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp_file:
                         tmp_file.write(uploaded_file.getvalue())
                         tmp_audio_path = tmp_file.name
-                    
-                    # Initialize detector with dataset
-                    detector = BirdCallDetector(
-                        model_path=selected_model,
-                        dataset_name=st.session_state['model_dataset'],
-                        conf_threshold=conf_threshold,
-                        iou_threshold=IOU_THRESHOLD,
-                        song_gap_threshold=song_gap_threshold
-                    )
-                    
-                    # Load audio
-                    # st.info("Loading audio file...")
-                    audio, sr = detector.load_audio(tmp_audio_path)
-                    duration = len(audio) / sr
-                    
-                    # Run detection with progress bar
-                    # st.info(f"Running detection on {duration:.2f} seconds of audio...")
-                    progress_bar = st.progress(0)
-                    progress_text = st.empty()
-                    
-                    def update_progress(current, total, message):
-                        """Update Streamlit progress bar"""
-                        progress = current / total
-                        progress_bar.progress(progress)
-                        progress_text.text(f"{message} ({current}/{total} clips)")
-                    
-                    detections = detector.detect_single_file(tmp_audio_path, progress_callback=update_progress)
-                    
-                    # Clear progress indicators
-                    progress_bar.empty()
-                    progress_text.empty()
-                    
-                    # Store results in session state
-                    st.session_state['detections'] = detections
-                    st.session_state['audio'] = audio
-                    st.session_state['sr'] = sr
-                    st.session_state['detector'] = detector
-                    st.session_state['tmp_audio_path'] = tmp_audio_path
-                    st.session_state['just_completed'] = True
-                    
-                    # Rerun to hide the button and show results
-                    st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"Error processing audio: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
+                
+                # Initialize detector with dataset
+                detector = BirdCallDetector(
+                    model_path=selected_model,
+                    dataset_name=st.session_state['model_dataset'],
+                    conf_threshold=conf_threshold,
+                    iou_threshold=IOU_THRESHOLD,
+                    song_gap_threshold=song_gap_threshold
+                )
+                
+                # Load audio
+                # st.info("Loading audio file...")
+                audio, sr = detector.load_audio(tmp_audio_path)
+                duration = len(audio) / sr
+                
+                # Run detection with progress bar
+                # st.info(f"Running detection on {duration:.2f} seconds of audio...")
+                progress_bar = st.progress(0)
+                progress_text = st.empty()
+                
+                def update_progress(current, total, message):
+                    """Update Streamlit progress bar"""
+                    progress = current / total
+                    progress_bar.progress(progress)
+                    progress_text.text(f"{message} ({current}/{total} clips)")
+                
+                detections = detector.detect_single_file(tmp_audio_path, progress_callback=update_progress)
+                
+                # Clear progress indicators
+                progress_bar.empty()
+                progress_text.empty()
+                
+                # Store results in session state
+                st.session_state['detections'] = detections
+                st.session_state['audio'] = audio
+                st.session_state['sr'] = sr
+                st.session_state['detector'] = detector
+                st.session_state['tmp_audio_path'] = tmp_audio_path
+                st.session_state['just_completed'] = True
+                
+                # Clear detection in progress flag
+                del st.session_state['detection_in_progress']
+                
+                # Rerun to show results
+                st.rerun()
+                
+            except Exception as e:
+                # Clear detection in progress flag on error
+                if 'detection_in_progress' in st.session_state:
+                    del st.session_state['detection_in_progress']
+                st.error(f"Error processing audio: {e}")
+                import traceback
+                st.code(traceback.format_exc())
     
     # Display results if available
     if 'detections' in st.session_state:
@@ -727,7 +836,11 @@ def main():
         st.subheader("PCEN Spectrogram with Detections")
         
         duration = len(audio) / sr
-        st.write(f"**Audio duration:** {duration:.1f}s | **Detections:** {len(detections)} | Scroll to navigate through the audio timeline")
+        duration_info = f"**Audio duration:** {duration:.1f}s"
+        if st.session_state.get('was_truncated', False):
+            original_duration = st.session_state.get('original_duration', duration)
+            duration_info += f" (truncated from {original_duration/60:.1f} min)"
+        st.write(f"{duration_info} | **Detections:** {len(detections)} | Scroll to navigate through the audio timeline")
         
         # Generate spectrogram with dataset-specific colors
         dataset_mappings = st.session_state.get('dataset_mappings', {})

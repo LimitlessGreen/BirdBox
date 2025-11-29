@@ -10,6 +10,8 @@ HEIGHT_AND_WIDTH_IN_PIXELS: int = 256
 CLIP_LENGTH: int = 3
 PCEN_SEGMENT_LENGTH: int = 60
 
+# Constants for Streamlit WebAPP
+MAX_DURATION_SECONDS: int = 600  # 10 minutes
 
 # Dataset configurations - all defined as static dictionaries
 DATASETS = {
