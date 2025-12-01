@@ -35,8 +35,9 @@ from inference.utils import pcen_inference
 
 
 # Default model URL for download if no models found
-DEFAULT_MODEL_URL = "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt"
-DEFAULT_MODEL_NAME = "yolov8n.pt"
+# For Nextcloud/TUC Cloud folder shares, use the WebDAV ZIP download endpoint:
+DEFAULT_MODEL_URL = "https://tuc.cloud/public.php/dav/files/HcbKnxFsfHYyq5G/?accept=zip"
+DEFAULT_MODEL_NAME = "Hawaii.pt"  # Name of the model file inside the ZIP archive
 
 
 def find_available_models(models_dir: Path) -> List[str]:
@@ -54,24 +55,96 @@ def find_available_models(models_dir: Path) -> List[str]:
 
 
 def download_default_model(models_dir: Path) -> str:
-    """Download a default model if none are available."""
+    """Download a default model from the specified URL if none are available.
+    
+    Supports both direct file downloads and ZIP archive downloads (for Nextcloud/TUC Cloud folder shares).
+    """
     models_dir.mkdir(parents=True, exist_ok=True)
     model_path = models_dir / DEFAULT_MODEL_NAME
     
     if not model_path.exists():
-        st.info(f"Downloading default model to {model_path}...")
+        st.info(f"Downloading default model from {DEFAULT_MODEL_URL}...")
         try:
-            from ultralytics import YOLO
-            # This will download the model
-            YOLO(DEFAULT_MODEL_NAME)
-            # Move it to models directory
-            default_location = Path.home() / '.cache' / 'ultralytics' / DEFAULT_MODEL_NAME
-            if default_location.exists():
-                import shutil
-                shutil.copy(default_location, model_path)
-            st.success("Default model downloaded successfully!")
+            import urllib.request
+            import zipfile
+            import tempfile
+            from urllib.error import URLError, HTTPError
+            
+            # Check if URL is a ZIP file (Nextcloud folder download)
+            is_zip = DEFAULT_MODEL_URL.endswith('?accept=zip') or DEFAULT_MODEL_URL.endswith('.zip')
+            
+            if is_zip:
+                # Download ZIP archive to temporary file
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_zip:
+                    tmp_zip_path = tmp_zip.name
+                
+                try:
+                    # Download ZIP
+                    req = urllib.request.Request(DEFAULT_MODEL_URL)
+                    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+                    
+                    with urllib.request.urlopen(req) as response:
+                        with open(tmp_zip_path, 'wb') as f:
+                            f.write(response.read())
+                    
+                    # Extract ZIP and find the model file
+                    with zipfile.ZipFile(tmp_zip_path, 'r') as zip_ref:
+                        # List all files in the ZIP
+                        file_list = zip_ref.namelist()
+                        
+                        # Look for the model file (could be in a subdirectory)
+                        model_found = False
+                        for file_path in file_list:
+                            # Check if this file matches our model name (could be in subdirectory)
+                            if file_path.endswith(DEFAULT_MODEL_NAME) or Path(file_path).name == DEFAULT_MODEL_NAME:
+                                # Extract the model file
+                                zip_ref.extract(file_path, models_dir)
+                                
+                                # If it was in a subdirectory, move it to the models directory root
+                                extracted_path = models_dir / file_path
+                                if extracted_path != model_path:
+                                    import shutil
+                                    shutil.move(str(extracted_path), str(model_path))
+                                
+                                model_found = True
+                                break
+                        
+                        if not model_found:
+                            st.error(f"Model file '{DEFAULT_MODEL_NAME}' not found in ZIP archive.")
+                            st.info(f"Files in ZIP: {', '.join(file_list[:10])}{'...' if len(file_list) > 10 else ''}")
+                            return None
+                    
+                    st.success(f"Default model extracted successfully to {model_path}!")
+                    
+                finally:
+                    # Clean up temporary ZIP file
+                    if os.path.exists(tmp_zip_path):
+                        os.unlink(tmp_zip_path)
+                        
+            else:
+                # Direct file download
+                req = urllib.request.Request(DEFAULT_MODEL_URL)
+                req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+                
+                with urllib.request.urlopen(req) as response:
+                    with open(model_path, 'wb') as f:
+                        f.write(response.read())
+                
+                st.success(f"Default model downloaded successfully to {model_path}!")
+                
+        except HTTPError as e:
+            st.error(f"Failed to download model: HTTP error {e.code} - {e.reason}")
+            return None
+        except URLError as e:
+            st.error(f"Failed to download model: URL error - {e.reason}")
+            return None
+        except zipfile.BadZipFile:
+            st.error("Downloaded file is not a valid ZIP archive.")
+            return None
         except Exception as e:
             st.error(f"Failed to download default model: {e}")
+            import traceback
+            st.code(traceback.format_exc())
             return None
     
     return str(model_path)
