@@ -55,14 +55,14 @@ class BirdCallDetector:
     MAX_FREQ = 15000  # Hz
     MIN_FREQ = 50     # Hz
     
-    def __init__(self, model_path: str, dataset_name: str, conf_threshold: float = 0.001, 
+    def __init__(self, model_path: str, species_mapping: str, conf_threshold: float = 0.001, 
                  iou_threshold: float = 0.5, song_gap_threshold: float = 0.5):
         """
         Initialize the bird call detector.
         
         Args:
             model_path: Path to the trained YOLO model (.pt, .onnx, .engine, etc.)
-            dataset_name: Dataset name for species mappings (e.g., 'Hawaii', 'Western-US')
+            species_mapping: Dataset name for species mappings (e.g., 'Hawaii', 'Western-US')
             conf_threshold: Confidence threshold for detections (0-1)
             iou_threshold: IoU threshold for NMS across time windows (0-1)
             song_gap_threshold: Max gap (seconds) between detections to merge into same song (default: 0.5)
@@ -73,20 +73,20 @@ class BirdCallDetector:
         self.song_gap_threshold = song_gap_threshold
         self.settings = pcen_inference.get_fft_and_pcen_settings()
         
-        # Load dataset-specific mappings
-        self.dataset_name = dataset_name
-        self.dataset_mappings = config.get_dataset_config(dataset_name)
-        self.id_to_ebird = self.dataset_mappings['id_to_ebird']
-        self.bird_colors = self.dataset_mappings['bird_colors']
+        # Load species-specific mappings
+        self.species_mapping = species_mapping
+        self.species_mappings = config.get_species_mapping(species_mapping)
+        self.id_to_ebird = self.species_mappings['id_to_ebird']
+        self.bird_colors = self.species_mappings['bird_colors']
         
         # PCEN and spectrogram settings (same as training)
         self.colormap = 'inferno'
         self.vmin = 0.0
         self.vmax = 100.0
-        self.clip_length = self.dataset_mappings['clip_length']  # 3 seconds
+        self.clip_length = self.species_mappings['clip_length']  # 3 seconds
         self.clip_hop = self.clip_length / 2  # 1.5 seconds (50% overlap)
-        self.height_width = self.dataset_mappings['height_width']  # 256
-        self.pcen_segment_length = self.dataset_mappings['pcen_segment_length']  # 60
+        self.height_width = self.species_mappings['height_width']  # 256
+        self.pcen_segment_length = self.species_mappings['pcen_segment_length']  # 60
         
         # Precompute mel scale range for frequency conversion
         self.max_mel = librosa.hz_to_mel(self.MAX_FREQ, htk=True)
@@ -94,7 +94,7 @@ class BirdCallDetector:
         self.mel_range = self.max_mel - self.min_mel
         
         print(f"Loaded model: {model_path}")
-        print(f"Dataset: {self.dataset_name}")
+        print(f"Species mapping: {self.species_mapping}")
         print(f"Species count: {len(self.id_to_ebird)}")
         print(f"Confidence threshold: {conf_threshold}")
         print(f"IoU threshold: {iou_threshold}")
@@ -643,7 +643,7 @@ class BirdCallDetector:
                 'model_config': {
                     'confidence_threshold': self.conf_threshold,
                     'iou_threshold': self.iou_threshold,
-                    'dataset': self.dataset_name,
+                    'species_mapping': self.species_mapping,
                 },
                 'detection_count': len(detections),
                 'detections': detections
@@ -655,7 +655,7 @@ class BirdCallDetector:
                 'model_config': {
                     'confidence_threshold': self.conf_threshold,
                     'iou_threshold': self.iou_threshold,
-                    'dataset': self.dataset_name,
+                    'species_mapping': self.species_mapping,
                 },
                 'detection_count': len(detections),
                 'detections': detections
@@ -863,22 +863,22 @@ def main():
         epilog="""
 Examples:
   # Basic detection (single file) - supports WAV, FLAC, OGG, MP3
-  python src/inference/detect_birds.py --audio recording.wav --model models/Hawaii.pt --dataset Hawaii
+  python src/inference/detect_birds.py --audio recording.wav --model models/Hawaii.pt --species-mapping Hawaii
   
   # Process entire folder of audio files
-  python src/inference/detect_birds.py --audio /path/to/audio/folder --model models/Western-US.pt --dataset Western-US --output-path results --output-format all
+  python src/inference/detect_birds.py --audio /path/to/audio/folder --model models/Western-US.pt --species-mapping Western-US --output-path results --output-format all
   
   # Process FLAC file
-  python src/inference/detect_birds.py --audio recording.flac --model models/Hawaii.pt --dataset Hawaii --output-path results --output-format json
+  python src/inference/detect_birds.py --audio recording.flac --model models/Hawaii.pt --species-mapping Hawaii --output-path results --output-format json
   
   # Save results to CSV
-  python src/inference/detect_birds.py --audio recording.mp3 --model models/Hawaii.pt --dataset Hawaii --output-path results --output-format csv
+  python src/inference/detect_birds.py --audio recording.mp3 --model models/Hawaii.pt --species-mapping Hawaii --output-path results --output-format csv
   
   # Save all formats
-  python src/inference/detect_birds.py --audio recording.ogg --model models/Hawaii.pt --dataset Hawaii --output-path results --output-format all
+  python src/inference/detect_birds.py --audio recording.ogg --model models/Hawaii.pt --species-mapping Hawaii --output-path results --output-format all
   
   # Adjust thresholds
-  python src/inference/detect_birds.py --audio audio.wav --model models/Western-US.pt --dataset Western-US --conf 0.5 --iou 0.3
+  python src/inference/detect_birds.py --audio audio.wav --model models/Western-US.pt --species-mapping Western-US --conf 0.5 --iou 0.3
         """
     )
     
@@ -897,7 +897,7 @@ Examples:
     )
     
     parser.add_argument(
-        '--dataset',
+        '--species-mapping',
         type=str,
         required=True,
         choices=['Hawaii', 'Hawaii_subset', 'Northeastern-US', 'Northeastern-US_subset', 
@@ -965,7 +965,7 @@ Examples:
     # Create detector
     detector = BirdCallDetector(
         model_path=args.model,
-        dataset_name=args.dataset,
+        species_mapping=args.species_mapping,
         conf_threshold=args.conf,
         iou_threshold=args.iou,
         song_gap_threshold=args.song_gap

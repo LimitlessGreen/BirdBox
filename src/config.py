@@ -1,9 +1,10 @@
 #################################################################################################################
 ### This file contains the configuration for the inference as well as for the evaluation of the detections.   ###
-### All datasets are defined as static data structures - no runtime mutations.                                 ###
+### All species mappings are defined as static data structures - no runtime mutations.                                 ###
 #################################################################################################################
 
 from typing import Dict
+from pathlib import Path
 
 # Global constants (same for all datasets)
 HEIGHT_AND_WIDTH_IN_PIXELS: int = 256
@@ -13,8 +14,8 @@ PCEN_SEGMENT_LENGTH: int = 60
 # Constants for Streamlit WebAPP
 MAX_DURATION_SECONDS: int = 600  # 10 minutes
 
-# Dataset configurations - all defined as static dictionaries
-DATASETS = {
+# Species mapping configurations - all defined as static dictionaries
+SPECIES_MAPPING = {
     'Hawaii': {
         'abbreviation': 'UHH',
         'id_to_ebird': {
@@ -965,43 +966,79 @@ DATASETS = {
 }
 
 
-def get_dataset_config(dataset_name: str) -> Dict:
+def get_species_mapping_for_model(model_path: str) -> str:
     """
-    Get configuration for a specific dataset.
-    
-    This function provides a clean interface to access dataset-specific mappings
-    without mutating global state. All datasets are defined as static data in DATASETS.
+    Map model filename to its corresponding species mapping name.
     
     Args:
-        dataset_name: Name of the dataset (e.g., 'Hawaii', 'Western-US')
+        model_path: Path to the model file
+        
+    Returns:
+        Species mapping name (e.g., 'Hawaii', 'Western-US')
+        
+    Raises:
+        ValueError: If model name doesn't match any known species mapping
+    """
+    model_name = Path(model_path).stem.lower()
+    
+    # Map model names to species mappings
+    if 'hawaii' in model_name:
+        if 'subset' in model_name:
+            return 'Hawaii_subset'
+        return 'Hawaii'
+    elif 'western-us' in model_name or 'western_us' in model_name or model_name == 'western-us':
+        return 'Western-US'
+    elif 'northeastern-us' in model_name or 'northeastern_us' in model_name:
+        if 'subset' in model_name:
+            return 'Northeastern-US_subset'
+        return 'Northeastern-US'
+    elif 'sierra' in model_name or 'southern-sierra' in model_name:
+        return 'Southern-Sierra-Nevada'
+    else:
+        # If we can't determine, show available options
+        raise ValueError(
+            f"Cannot determine species mapping for model: {Path(model_path).name}\n"
+            f"Model name should contain: 'Hawaii', 'Western-US', 'Northeastern-US', or 'Sierra'"
+        )
+
+
+def get_species_mapping(species_mapping_name: str) -> Dict:
+    """
+    Get configuration for a specific species mapping.
+    
+    This function provides a clean interface to access species mapping configurations
+    without mutating global state. All species mappings are defined as static data in SPECIES_MAPPING.
+    
+    Args:
+        species_mapping_name: Name of the species mapping (e.g., 'Hawaii', 'Western-US')
         
     Returns:
         Dictionary containing:
             - 'id_to_ebird': Mapping from class IDs to eBird species codes
             - 'ebird_to_name': Mapping from eBird codes to full bird names
             - 'bird_colors': Mapping from class IDs to RGB color tuples
-            - 'abbreviation': Dataset abbreviation
+            - 'abbreviation': Species mapping abbreviation
             - 'clip_length': CLIP_LENGTH constant
             - 'height_width': HEIGHT_AND_WIDTH_IN_PIXELS constant
             - 'pcen_segment_length': PCEN_SEGMENT_LENGTH constant
             
     Raises:
-        ValueError: If dataset name is invalid
+        ValueError: If species mapping name is invalid
     """
-    if dataset_name not in DATASETS:
-        valid_datasets = ', '.join(sorted(DATASETS.keys()))
+    if species_mapping_name not in SPECIES_MAPPING:
+        valid_mappings = ', '.join(sorted(SPECIES_MAPPING.keys()))
         raise ValueError(
-            f"Invalid dataset name: {dataset_name}\n"
-            f"Available datasets: {valid_datasets}"
+            f"Invalid species mapping name: {species_mapping_name}\n"
+            f"Available species mappings: {valid_mappings}"
         )
     
-    dataset_data = DATASETS[dataset_name]
+    mapping_data = SPECIES_MAPPING[species_mapping_name]
     
     return {
-        'id_to_ebird': dataset_data['id_to_ebird'].copy(),
-        'ebird_to_name': dataset_data['ebird_to_name'].copy(),
-        'bird_colors': dataset_data['bird_colors'].copy(),
-        'abbreviation': dataset_data['abbreviation'],
+        'id_to_ebird': mapping_data['id_to_ebird'].copy(),
+        'ebird_to_name': mapping_data['ebird_to_name'].copy(),
+        'bird_colors': mapping_data['bird_colors'].copy(),
+        'abbreviation': mapping_data['abbreviation'],
         'clip_length': CLIP_LENGTH,
         'height_width': HEIGHT_AND_WIDTH_IN_PIXELS,
         'pcen_segment_length': PCEN_SEGMENT_LENGTH

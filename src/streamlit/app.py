@@ -39,42 +39,6 @@ DEFAULT_MODEL_URL = "https://github.com/ultralytics/assets/releases/download/v0.
 DEFAULT_MODEL_NAME = "yolov8n.pt"
 
 
-def get_dataset_for_model(model_path: str) -> str:
-    """
-    Map model filename to its corresponding dataset name.
-    
-    Args:
-        model_path: Path to the model file
-        
-    Returns:
-        Dataset name
-        
-    Raises:
-        ValueError: If model name doesn't match any known dataset
-    """
-    model_name = Path(model_path).stem.lower()
-    
-    # Map model names to datasets
-    if 'hawaii' in model_name:
-        if 'subset' in model_name:
-            return 'Hawaii_subset'
-        return 'Hawaii'
-    elif 'western-us' in model_name or 'western_us' in model_name or model_name == 'western-us':
-        return 'Western-US'
-    elif 'northeastern-us' in model_name or 'northeastern_us' in model_name:
-        if 'subset' in model_name:
-            return 'Northeastern-US_subset'
-        return 'Northeastern-US'
-    elif 'sierra' in model_name or 'southern-sierra' in model_name:
-        return 'Southern-Sierra-Nevada'
-    else:
-        # If we can't determine, show available options
-        raise ValueError(
-            f"Cannot determine dataset for model: {Path(model_path).name}\n"
-            f"Model name should contain: 'Hawaii', 'Western-US', 'Northeastern-US', or 'Sierra'"
-        )
-
-
 def find_available_models(models_dir: Path) -> List[str]:
     """Find all available model files in the models directory."""
     if not models_dir.exists():
@@ -125,8 +89,8 @@ def get_species_color(species_id: int, bird_colors: Dict = None) -> str:
         Hex color string
     """
     if bird_colors is None:
-        # Fallback to default dataset (Hawaii) if not provided
-        default_config = config.get_dataset_config('Hawaii')
+        # Fallback to default species mapping (Hawaii) if not provided
+        default_config = config.get_species_mapping('Hawaii')
         bird_colors = default_config['bird_colors']
     
     if species_id in bird_colors:
@@ -452,34 +416,35 @@ def main():
         st.error("No models available. Please add models to the models directory or download a default model.")
         st.stop()
     
-    # Get dataset for selected model
+    # Get species mapping for selected model
     try:
-        model_dataset = get_dataset_for_model(selected_model)
-        dataset_mappings = config.get_dataset_config(model_dataset)
+        species_mapping_name = config.get_species_mapping_for_model(selected_model)
+        species_mappings = config.get_species_mapping(species_mapping_name)
     except ValueError as e:
-        st.sidebar.error("⚠️ Could not determine dataset for selected model")
+        st.sidebar.error("⚠️ Could not determine species mapping for selected model")
         st.sidebar.warning(str(e))
         st.stop()
     
     # Store in session state for use throughout the app
-    st.session_state['model_dataset'] = model_dataset
-    st.session_state['dataset_mappings'] = dataset_mappings
+    st.session_state['species_mapping'] = species_mapping_name
+    st.session_state['species_mappings'] = species_mappings
     
     # Species count and list
-    # st.sidebar.info(f"**Species Count:** {len(dataset_mappings['id_to_ebird'])}")
+    # st.sidebar.info(f"**Species Count:** {len(species_mappings['id_to_ebird'])}")
     
     # Species list section
     with st.sidebar.expander("view species list for the selected model", expanded=False):
-        id_to_ebird = dataset_mappings['id_to_ebird']
-        ebird_to_name = dataset_mappings.get('ebird_to_name', {})
+        id_to_ebird = species_mappings['id_to_ebird']
+        ebird_to_name = species_mappings.get('ebird_to_name', {})
         
         # If ebird_to_name is empty, try to get it directly from config (in case of stale session state)
         if not ebird_to_name:
             try:
-                fresh_config = config.get_dataset_config(model_dataset)
+                species_mapping_name = st.session_state.get('species_mapping', 'Hawaii')
+                fresh_config = config.get_species_mapping(species_mapping_name)
                 ebird_to_name = fresh_config.get('ebird_to_name', {})
                 # Update session state with fresh data
-                st.session_state['dataset_mappings'] = fresh_config
+                st.session_state['species_mappings'] = fresh_config
             except Exception:
                 pass
         
@@ -518,10 +483,11 @@ def main():
         # Download buttons
         # CSV download
         csv_str = species_df.to_csv(index=False)
+        species_mapping_name = st.session_state.get('species_mapping', 'Hawaii')
         st.download_button(
             label="Download as CSV",
             data=csv_str,
-            file_name=f"{model_dataset}_species_list.csv",
+            file_name=f"{species_mapping_name}_species_list.csv",
             mime="text/csv",
             key="download_species_csv",
             use_container_width=True
@@ -529,7 +495,7 @@ def main():
         
         # JSON download
         json_data = {
-            'dataset': model_dataset,
+            'species_mapping': species_mapping_name,
             'species_count': len(species_codes),
             'species': [
                 {
@@ -544,7 +510,7 @@ def main():
         st.download_button(
             label="Download as JSON",
             data=json_str,
-            file_name=f"{model_dataset}_species_list.json",
+            file_name=f"{species_mapping_name}_species_list.json",
             mime="application/json",
             key="download_species_json",
             use_container_width=True
@@ -764,10 +730,10 @@ def main():
                         tmp_file.write(uploaded_file.getvalue())
                         tmp_audio_path = tmp_file.name
                 
-                # Initialize detector with dataset
+                # Initialize detector with species mapping
                 detector = BirdCallDetector(
                     model_path=selected_model,
-                    dataset_name=st.session_state['model_dataset'],
+                    species_mapping=st.session_state['species_mapping'],
                     conf_threshold=conf_threshold,
                     iou_threshold=IOU_THRESHOLD,
                     song_gap_threshold=song_gap_threshold
@@ -845,14 +811,14 @@ def main():
             duration_info += f" (truncated from {original_duration/60:.1f} min)"
         st.write(f"{duration_info} | **Detections:** {len(detections)} | Scroll to navigate through the audio timeline")
         
-        # Generate spectrogram with dataset-specific colors
-        dataset_mappings = st.session_state.get('dataset_mappings', {})
-        if not dataset_mappings or 'bird_colors' not in dataset_mappings:
-            # Fallback to default dataset if mappings not available
-            default_config = config.get_dataset_config('Hawaii')
+        # Generate spectrogram with species-specific colors
+        species_mappings = st.session_state.get('species_mappings', {})
+        if not species_mappings or 'bird_colors' not in species_mappings:
+            # Fallback to default species mapping if mappings not available
+            default_config = config.get_species_mapping('Hawaii')
             bird_colors = default_config['bird_colors']
         else:
-            bird_colors = dataset_mappings['bird_colors']
+            bird_colors = species_mappings['bird_colors']
         with st.spinner("Generating spectrogram with PCEN and adding bounding boxes..."):
             full_spectrogram = create_full_spectrogram_visualization(audio, sr, detections, bird_colors=bird_colors)
         
@@ -1017,7 +983,7 @@ def main():
                     'confidence_threshold': conf_threshold,
                     'iou_threshold': IOU_THRESHOLD,
                     'song_gap_threshold': song_gap_threshold,
-                    'dataset': st.session_state.get('model_dataset', 'Hawaii'),  # Fallback to default dataset
+                    'species_mapping': st.session_state.get('species_mapping', 'Hawaii'),  # Fallback to default species mapping
                 },
                 'detection_count': len(detections),
                 'detections': detections

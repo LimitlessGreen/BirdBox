@@ -29,7 +29,7 @@ Alternatively, you can train your own model on a custom dataset by using the cod
 To specify the model using the CLI, just pass the relative path of the model as the `--model` command-line argument. 
 If you use the code as a package, you can specify the `model` function parameter to match the relative path of the model file.
 
-**Important:** The species mapping in the `conf.yaml` file the model is trained with and the [`ID_TO_EBIRD_CODES` dictionary in `src/config.py`](src/config.py#L32-L60) have to match.
+**Important:** The species mapping in the `conf.yaml` file the model is trained with and the `DATASETS[model_name]` dictionary in [`src/config.py`](src/config.py#L17) have to match.
 
 ## Quick Start
 
@@ -73,12 +73,14 @@ See [STREAMLIT_APP.md](STREAMLIT_APP.md) for detailed usage guide.
 # Detect birds in a single audio file (supports WAV, FLAC, OGG, MP3)
 python src/inference/detect_birds.py \
     --audio path/to/recording.wav \
-    --model models/best.pt
+    --model models/best.pt \
+    --species-mapping Hawaii
 
 # Or process entire directory (batch processing)
 python src/inference/detect_birds.py \
     --audio path/to/audio/folder \
     --model models/best.pt \
+    --species-mapping Hawaii
 ```
 
 ## Documentation
@@ -113,6 +115,7 @@ Complete guide to evaluating detection performance:
 python src/inference/detect_birds.py \
     --audio data/test_audio/ \
     --model models/best.pt \
+    --species-mapping Hawaii \
     --conf 0.001 \
     --output-path results/all_detections \
     --output-format json
@@ -152,6 +155,7 @@ from inference.detect_birds import BirdCallDetector
 # Initialize detector
 detector = BirdCallDetector(
     model_path="models/best.pt",
+    species_mapping="Hawaii",
     conf_threshold=0.001,
     song_gap_threshold=0.1
 )
