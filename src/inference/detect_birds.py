@@ -18,6 +18,7 @@ import argparse
 import json
 import tempfile
 import shutil
+import threading
 from pathlib import Path
 from typing import List, Dict, Tuple
 import numpy as np
@@ -29,6 +30,19 @@ import librosa
 import librosa.display
 from ultralytics import YOLO
 from tqdm import tqdm
+
+# Try to import file locking (Unix/Linux)
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False
+    # Windows fallback
+    try:
+        import msvcrt
+        HAS_MSVCRT = True
+    except ImportError:
+        HAS_MSVCRT = False
 
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -50,6 +64,22 @@ class BirdCallDetector:
     This class handles the complete pipeline from audio loading to detection,
     using the same processing approach as training.
     """
+    
+    # Class-level locks for thread/process-safe YOLO model inference
+    # YOLO models are not thread-safe when multiple instances run inference simultaneously
+    _inference_lock = threading.Lock()  # For thread-level locking (same process)
+    _lock_file_path = None  # For process-level locking (file-based, works across processes)
+    
+    @classmethod
+    def _get_lock_file(cls):
+        """Get or create the lock file for process-level locking."""
+        if cls._lock_file_path is None:
+            # Create lock file in system temp directory
+            lock_dir = Path(tempfile.gettempdir())
+            cls._lock_file_path = lock_dir / "birdbox_yolo_inference.lock"
+            # Create the lock file if it doesn't exist
+            cls._lock_file_path.touch(exist_ok=True)
+        return cls._lock_file_path
     
     # Frequency range constants (same as in dataset_conversion/get_labels.py)
     MAX_FREQ = 15000  # Hz
@@ -268,13 +298,53 @@ class BirdCallDetector:
         temp_image = temp_dir / f"temp_{clip_data['start_time']:.1f}s.png"
         self.create_spectrogram_image(clip_data['pcen'], str(temp_image))
         
-        # Run inference
-        results = self.model(
-            str(temp_image),
-            conf=self.conf_threshold,
-            iou=self.iou_threshold,
-            verbose=False
-        )[0]
+        # Run inference with locks to prevent interference between concurrent sessions
+        # YOLO models are not thread-safe when multiple instances run inference simultaneously
+        # Use both thread lock (for same process) and file lock (for different processes)
+        with BirdCallDetector._inference_lock:
+            # File-based lock works across processes (e.g., multiple Streamlit workers)
+            lock_file_path = BirdCallDetector._get_lock_file()
+            lock_file = None
+            try:
+                lock_file = open(lock_file_path, 'w')
+                
+                # Try to acquire file lock (works across processes)
+                if HAS_FCNTL:
+                    # Unix/Linux: use fcntl
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                elif HAS_MSVCRT:
+                    # Windows: use msvcrt
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                
+                # Run inference
+                results = self.model(
+                    str(temp_image),
+                    conf=self.conf_threshold,
+                    iou=self.iou_threshold,
+                    verbose=False
+                )[0]
+                
+            except (IOError, OSError, AttributeError):
+                # Fallback: if file locking fails, just use the thread lock
+                # (works within same process, which is the common case)
+                results = self.model(
+                    str(temp_image),
+                    conf=self.conf_threshold,
+                    iou=self.iou_threshold,
+                    verbose=False
+                )[0]
+            finally:
+                # Always release the file lock and close file
+                if lock_file is not None:
+                    try:
+                        if HAS_FCNTL:
+                            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                        elif HAS_MSVCRT:
+                            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                    except (IOError, OSError, AttributeError):
+                        pass  # Ignore unlock errors
+                    finally:
+                        lock_file.close()
         
         detections = []
         
