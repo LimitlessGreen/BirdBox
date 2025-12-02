@@ -12,6 +12,7 @@ import tempfile
 import json
 import base64
 import time
+import threading
 from pathlib import Path
 from typing import List, Dict
 import io
@@ -20,11 +21,18 @@ import streamlit as st
 import streamlit.components.v1 as components
 import numpy as np
 import pandas as pd
+import matplotlib
+# Set non-interactive backend BEFORE importing pyplot to prevent GUI conflicts in multi-user scenarios
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from PIL import Image
 import librosa
 import soundfile as sf
+
+# Global lock for thread-safe matplotlib figure creation
+# Matplotlib is not thread-safe when multiple users create figures simultaneously
+_matplotlib_lock = threading.Lock()
 
 # Add src directory to path (go up one level from src/streamlit/app.py to src/)
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -302,13 +310,24 @@ def create_full_spectrogram_visualization(
     # Get spectrogram dimensions
     n_mels, n_time = pcen_data.shape
     
+    # Validate pcen_data
+    if pcen_data.size == 0:
+        raise ValueError("PCEN data is empty")
+    if np.any(np.isnan(pcen_data)) or np.any(np.isinf(pcen_data)):
+        # Replace NaN/Inf with 0
+        pcen_data = np.nan_to_num(pcen_data, nan=0.0, posinf=vmax, neginf=vmin)
+    
     # Calculate actual duration based on the audio length (before padding)
     duration = len(audio) / sr
+    
+    # Ensure minimum dimensions
+    if duration <= 0:
+        raise ValueError(f"Invalid audio duration: {duration}")
     
     # Create figure - wide for scrolling, without axes
     # Calculate pixels per second for good resolution
     pixels_per_second = 100  # 100 pixels per second gives good detail
-    width_pixels = int(duration * pixels_per_second)
+    width_pixels = max(100, int(duration * pixels_per_second))  # Minimum 100 pixels width
     height_pixels = 600  # Fixed height
     
     # Calculate figure size in inches (dpi will be 100)
@@ -316,61 +335,98 @@ def create_full_spectrogram_visualization(
     fig_width = width_pixels / dpi
     fig_height = height_pixels / dpi
     
-    fig = plt.figure(figsize=(fig_width, fig_height), dpi=dpi)
-    ax = plt.Axes(fig, [0., 0., 1., 1.])  # Full figure, no margins
-    ax.set_axis_off()  # No axes
-    fig.add_axes(ax)
-    
-    # Display spectrogram without axes
-    # Use extent in normalized mel coordinates [0, 1] for y-axis
-    img = ax.imshow(
-        pcen_data,
-        aspect='auto',
-        origin='lower',
-        cmap=colormap,
-        vmin=vmin,
-        vmax=vmax,
-        extent=[0, duration, 0, 1]  # time in seconds (matching detections), normalized mel [0, 1]
-    )
-    
-    # Add bounding boxes for all detections
-    for det in detections:
-        # Convert Hz to normalized mel coordinates
-        freq_low_norm = hz_to_mel_normalized(det['freq_low_hz'])
-        freq_high_norm = hz_to_mel_normalized(det['freq_high_hz'])
+    # Use lock to prevent concurrent matplotlib operations from interfering
+    # Matplotlib is not thread-safe when multiple users create figures simultaneously
+    with _matplotlib_lock:
+        fig = None
+        img_pil = None
+        try:
+            # Create new figure (don't use plt.clf() as it can interfere with figure creation)
+            fig = plt.figure(figsize=(fig_width, fig_height), dpi=dpi, facecolor='black')
+            if fig is None:
+                raise RuntimeError("Failed to create matplotlib figure")
+            
+            ax = fig.add_axes([0., 0., 1., 1.])  # Full figure, no margins
+            ax.set_axis_off()  # No axes
+            
+            # Display spectrogram without axes
+            # Use extent in normalized mel coordinates [0, 1] for y-axis
+            im = ax.imshow(
+                pcen_data,
+                aspect='auto',
+                origin='lower',
+                cmap=colormap,
+                vmin=vmin,
+                vmax=vmax,
+                extent=[0, duration, 0, 1],  # time in seconds (matching detections), normalized mel [0, 1]
+                interpolation='nearest'
+            )
+            
+            # Add bounding boxes for all detections
+            for det in detections:
+                try:
+                    # Convert Hz to normalized mel coordinates
+                    freq_low_norm = hz_to_mel_normalized(det['freq_low_hz'])
+                    freq_high_norm = hz_to_mel_normalized(det['freq_high_hz'])
+                    
+                    # Create rectangle (time x normalized mel)
+                    rect = patches.Rectangle(
+                        (det['time_start'], freq_low_norm),
+                        det['time_end'] - det['time_start'],
+                        freq_high_norm - freq_low_norm,
+                        linewidth=2,
+                        edgecolor=get_species_color(det['species_id'], bird_colors),
+                        facecolor='none'
+                    )
+                    ax.add_patch(rect)
+                    
+                    # Add species label
+                    label_offset = 0.02  # Small offset in normalized coordinates
+                    ax.text(
+                        det['time_start'],
+                        freq_high_norm + label_offset,
+                        f"{det['species']} {det['confidence']:.2f}",
+                        color='white',
+                        fontsize=8,
+                        weight='bold',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor=get_species_color(det['species_id'], bird_colors), alpha=0.8),
+                        verticalalignment='bottom'
+                    )
+                except Exception:
+                    # Skip individual detection if it causes an error
+                    continue
+            
+            # Verify figure is still valid before saving
+            if fig is None or not hasattr(fig, 'canvas') or fig.canvas is None:
+                raise RuntimeError("Figure is invalid or has been closed")
+            
+            # Convert to PIL Image - save BEFORE closing the figure
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', pad_inches=0, facecolor='black', edgecolor='none')
+            buf.seek(0)
+            img_pil = Image.open(buf)
+            # Make sure the image is loaded into memory before closing figure
+            img_pil.load()
+            
+        except Exception as e:
+            # Log the error but don't return black image - let it propagate so we can see what's wrong
+            import traceback
+            print(f"Error creating spectrogram: {e}")
+            print(traceback.format_exc())
+            # Re-raise the exception so the caller can handle it
+            raise
+        finally:
+            # Always close figure to prevent memory leaks and conflicts in multi-user scenarios
+            if fig is not None:
+                try:
+                    plt.close(fig)
+                except Exception:
+                    pass  # Ignore errors when closing
         
-        # Create rectangle (time x normalized mel)
-        rect = patches.Rectangle(
-            (det['time_start'], freq_low_norm),
-            det['time_end'] - det['time_start'],
-            freq_high_norm - freq_low_norm,
-            linewidth=2,
-            edgecolor=get_species_color(det['species_id'], bird_colors),
-            facecolor='none'
-        )
-        ax.add_patch(rect)
-        
-        # Add species label
-        label_offset = 0.02  # Small offset in normalized coordinates
-        ax.text(
-            det['time_start'],
-            freq_high_norm + label_offset,
-            f"{det['species']} {det['confidence']:.2f}",
-            color='white',
-            fontsize=8,
-            weight='bold',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor=get_species_color(det['species_id'], bird_colors), alpha=0.8),
-            verticalalignment='bottom'
-        )
-    
-    # Convert to PIL Image
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', pad_inches=0)
-    buf.seek(0)
-    img_pil = Image.open(buf)
-    plt.close(fig)
-    
-    return img_pil
+        # Return the image after the figure is closed
+        if img_pil is None:
+            raise RuntimeError("Failed to create spectrogram image")
+        return img_pil
 
 
 def convert_to_json_serializable(obj):
@@ -645,7 +701,7 @@ def main():
     
     # Reset if any parameter changed
     if should_reset:
-        for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'just_completed', 'detection_in_progress']:
+        for key in ['detections', 'audio', 'sr', 'tmp_audio_path', 'just_completed', 'detection_in_progress', 'model_path']:
             if key in st.session_state:
                 del st.session_state[key]
         st.info("Settings changed. Click 'Detect Bird Calls' to run detection with the selected settings.")
@@ -685,7 +741,7 @@ def main():
                 pass  # Ignore errors during cleanup
         
         # Clear all detection results when file is removed
-        for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'uploaded_filename', 'just_completed', 'previous_model', 'truncated_audio_path', 'original_duration', 'was_truncated', 'detection_in_progress']:
+        for key in ['detections', 'audio', 'sr', 'tmp_audio_path', 'uploaded_filename', 'just_completed', 'previous_model', 'truncated_audio_path', 'original_duration', 'was_truncated', 'detection_in_progress', 'model_path']:
             if key in st.session_state:
                 del st.session_state[key]
     
@@ -702,7 +758,7 @@ def main():
                     pass  # Ignore errors during cleanup
             
             # Clear all detection results when a new file is uploaded
-            for key in ['detections', 'audio', 'sr', 'detector', 'tmp_audio_path', 'uploaded_filename', 'just_completed', 'previous_model', 'truncated_audio_path', 'original_duration', 'was_truncated', 'detection_in_progress']:
+            for key in ['detections', 'audio', 'sr', 'tmp_audio_path', 'uploaded_filename', 'just_completed', 'previous_model', 'truncated_audio_path', 'original_duration', 'was_truncated', 'detection_in_progress', 'model_path']:
                 if key in st.session_state:
                     del st.session_state[key]
         
@@ -804,6 +860,7 @@ def main():
                         tmp_audio_path = tmp_file.name
                 
                 # Initialize detector with species mapping
+                # Note: Each user session gets its own detector instance to avoid thread-safety issues
                 detector = BirdCallDetector(
                     model_path=selected_model,
                     species_mapping=st.session_state['species_mapping'],
@@ -835,10 +892,13 @@ def main():
                 progress_text.empty()
                 
                 # Store results in session state
+                # Note: We don't store the detector object itself to avoid memory issues and potential
+                # thread-safety problems. The detector is recreated if needed for spectrogram generation.
                 st.session_state['detections'] = detections
                 st.session_state['audio'] = audio
                 st.session_state['sr'] = sr
-                st.session_state['detector'] = detector
+                # Store model path and settings instead of detector object
+                st.session_state['model_path'] = selected_model
                 st.session_state['tmp_audio_path'] = tmp_audio_path
                 st.session_state['just_completed'] = True
                 
@@ -861,7 +921,7 @@ def main():
         detections = st.session_state['detections']
         audio = st.session_state['audio']
         sr = st.session_state['sr']
-        detector = st.session_state['detector']
+        # Detector is not stored in session state to avoid memory issues and thread-safety problems
         
         # Show success message if just completed (will disappear after spectrogram renders)
         show_success_message = st.session_state.get('just_completed', False)
@@ -892,8 +952,33 @@ def main():
             bird_colors = default_config['bird_colors']
         else:
             bird_colors = species_mappings['bird_colors']
+        
         with st.spinner("Generating spectrogram with PCEN and adding bounding boxes..."):
-            full_spectrogram = create_full_spectrogram_visualization(audio, sr, detections, bird_colors=bird_colors)
+            try:
+                full_spectrogram = create_full_spectrogram_visualization(audio, sr, detections, bird_colors=bird_colors)
+                # Validate the image was created successfully
+                if full_spectrogram is None:
+                    raise RuntimeError("Spectrogram generation returned None")
+                if full_spectrogram.size[0] == 0 or full_spectrogram.size[1] == 0:
+                    raise RuntimeError(f"Invalid spectrogram dimensions: {full_spectrogram.size}")
+            except Exception as e:
+                st.error(f"⚠️ Error generating spectrogram: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+                # Create a placeholder image with error message
+                duration = len(audio) / sr
+                width_pixels = max(100, int(duration * 100))
+                full_spectrogram = Image.new('RGB', (width_pixels, 600), color='black')
+                # Add error text to the image
+                from PIL import ImageDraw, ImageFont
+                draw = ImageDraw.Draw(full_spectrogram)
+                try:
+                    # Try to use a default font
+                    font = ImageFont.load_default()
+                except:
+                    font = None
+                error_text = f"Error: {str(e)[:50]}"
+                draw.text((10, 10), error_text, fill='red', font=font)
         
         # Display spectrogram in scrollable container
         if full_spectrogram:
@@ -1025,13 +1110,18 @@ def main():
             
             with col2:
                 fig, ax = plt.subplots(figsize=(8, 4))
-                species_df_plot = species_df.head(10)  # Top 10 species
-                ax.barh(species_df_plot['Species'], species_df_plot['Count'])
-                ax.set_xlabel('Count')
-                ax.set_title('Top Species Detected')
-                ax.invert_yaxis()
-                plt.tight_layout()
-                st.pyplot(fig)
+                try:
+                    species_df_plot = species_df.head(10)  # Top 10 species
+                    ax.barh(species_df_plot['Species'], species_df_plot['Count'])
+                    ax.set_xlabel('Count')
+                    ax.set_title('Top Species Detected')
+                    ax.invert_yaxis()
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                finally:
+                    # Always close figure to prevent memory leaks and conflicts in multi-user scenarios
+                    plt.close(fig)
+                    plt.clf()
         
         # Detection table
         st.markdown("---")
