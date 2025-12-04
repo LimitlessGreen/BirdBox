@@ -447,7 +447,31 @@ def convert_to_json_serializable(obj):
         return obj
 
 
-def format_detections_for_table(detections: List[Dict]) -> pd.DataFrame:
+def get_common_name_from_ebird_code(ebird_code: str, species_mappings: Dict) -> str:
+    """
+    Extract common name from eBird code using species mappings.
+    
+    Args:
+        ebird_code: eBird species code
+        species_mappings: Species mapping dictionary with 'ebird_to_name' key
+        
+    Returns:
+        Common name string, or eBird code if not found
+    """
+    ebird_to_name = species_mappings.get('ebird_to_name', {})
+    full_name = ebird_to_name.get(ebird_code, None)
+    
+    if full_name and '_' in full_name:
+        # Split on first underscore: "Scientific Name_Common Name"
+        parts = full_name.split('_', 1)
+        if len(parts) > 1:
+            return parts[1]  # Return common name
+    
+    # Fallback to eBird code if name not found or format is unexpected
+    return ebird_code
+
+
+def format_detections_for_table(detections: List[Dict], species_mappings: Dict = None) -> pd.DataFrame:
     """Format detections as a pandas DataFrame for display."""
     if not detections:
         return pd.DataFrame()
@@ -455,9 +479,15 @@ def format_detections_for_table(detections: List[Dict]) -> pd.DataFrame:
     # Create DataFrame with relevant columns
     df_data = []
     for i, det in enumerate(detections, 1):
+        # Get common name for display if species_mappings provided
+        if species_mappings:
+            species_display = get_common_name_from_ebird_code(det['species'], species_mappings)
+        else:
+            species_display = det['species']
+        
         row = {
             '#': i,
-            'Species': det['species'],
+            'Species': species_display,
             'Confidence': f"{det['confidence']:.3f}",
             'Start (s)': f"{det['time_start']:.2f}",
             'End (s)': f"{det['time_end']:.2f}",
@@ -1094,6 +1124,9 @@ def main():
         # Species breakdown
         if detections:
             st.subheader("Species Breakdown")
+            # Get species mappings for common name lookup
+            species_mappings = st.session_state.get('species_mappings', {})
+            
             species_counts = {}
             for det in detections:
                 species = det['species']
@@ -1101,10 +1134,13 @@ def main():
                     species_counts[species] = 0
                 species_counts[species] += 1
             
-            species_df = pd.DataFrame([
-                {'Species': species, 'Count': count}
-                for species, count in sorted(species_counts.items(), key=lambda x: x[1], reverse=True)
-            ])
+            # Convert eBird codes to common names for display
+            species_list = []
+            for ebird_code, count in sorted(species_counts.items(), key=lambda x: x[1], reverse=True):
+                common_name = get_common_name_from_ebird_code(ebird_code, species_mappings)
+                species_list.append({'Species': common_name, 'Count': count})
+            
+            species_df = pd.DataFrame(species_list)
             
             col1, col2 = st.columns([1, 2])
             with col1:
@@ -1129,7 +1165,9 @@ def main():
         st.markdown("---")
         st.subheader("Detailed Detection Table")
         
-        df = format_detections_for_table(detections)
+        # Get species mappings for common name lookup
+        species_mappings = st.session_state.get('species_mappings', {})
+        df = format_detections_for_table(detections, species_mappings)
         if not df.empty:
             st.dataframe(df, width='stretch', hide_index=True, height=400)
         
