@@ -67,7 +67,9 @@ Then open your browser to `http://localhost:8501` and:
 - View PCEN spectrograms with bounding boxes
 - Download results as JSON or CSV
 
-See [STREAMLIT_APP.md](STREAMLIT_APP.md) for detailed usage guide.
+If done correctly, the Streamlit Web Interface will look like this:
+
+![Streamlit app screenshot](img/streamlit_ui_screenshot.png)
 
 #### Option 2: Command Line Interface
 
