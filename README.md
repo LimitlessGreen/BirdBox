@@ -87,29 +87,6 @@ python src/inference/detect_birds.py \
     --species-mapping Hawaii
 ```
 
-## Documentation
-
-This repository includes comprehensive documentation for all features:
-
-### [INFERENCE.md](INFERENCE.md)
-Complete guide to bird call detection:
-- Command-line and Python API usage
-- How the detection pipeline works (PCEN → spectrograms → YOLO)
-- Song reconstruction algorithm
-- Batch processing
-- Parameter tuning (confidence, IoU, song gap thresholds)
-- Output formats and examples
-- Troubleshooting guide
-
-
-### [EVALUATION.md](EVALUATION.md)
-Complete guide to evaluating detection performance:
-- **F-Beta Score Analysis** - Find optimal confidence thresholds
-- **Detection Filtering** - Apply confidence thresholds to results
-- **Confusion Matrix Analysis** - Understand species-level performance
-- Best practices and complete workflow examples
-- Understanding precision, recall, and F-beta scores
-
 ## Typical Workflow
 
 ### Complete Detection & Evaluation Pipeline
@@ -146,8 +123,6 @@ python src/evaluation/confusion_matrix_analysis.py \
 
 # Step 5: Examine results in results/ directory
 ```
-
-See [EVALUATION.md](EVALUATION.md) for detailed workflow examples.
 
 ## Package Usage
 
@@ -231,7 +206,6 @@ print(optimal_df)
 - Use lossless formats (WAV/FLAC) instead of lossy (MP3/OGG)
 - Model was trained on WAV files - lossy compression can affect accuracy
 - Ensure MP3/OGG files use high bitrate (≥256 kbps) if you must use them
-- See [INFERENCE.md - Audio Format Recommendations](INFERENCE.md#audio-format-recommendations) for details
 
 **"Out of memory errors"**
 - Process shorter audio files
@@ -243,7 +217,6 @@ print(optimal_df)
 - Verify ground truth CSV has correct column names
 - Ensure audio filenames match between detections and labels
 
-See [INFERENCE.md](INFERENCE.md#troubleshooting) and [EVALUATION.md](EVALUATION.md#troubleshooting) for more details.
 
 ## Citation
 
