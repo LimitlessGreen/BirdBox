@@ -1,9 +1,23 @@
+# python cache
 __pycache__/
 
+# input datasets and ground truth
 datasets/
 
+# results of inference and evaluation
 results*/
 
+# pytorch models
 *.pt
 
+# currently online streamlit app
 online/
+
+# report
+bericht/
+EVALUATION.md
+INFERENCE.md
+ToDo.md
+TRAINING_VS_INFERENCE.md
+run_pipeline.sh
+eBird_code_to_name.txt
